@@ -16,6 +16,7 @@ from verify_pilot_complete import sentinel_current
 from verify_pilot_followup import sentinel_current as followup_sentinel_current
 from verify_formal_complete import sentinel_current as formal_sentinel_current
 from verify_alpha_scan import sentinel_current as alpha_sentinel_current
+from verify_dataset import sentinel_current as dataset_sentinel_current
 
 
 ROOT = Path("/home/hyp/Code/flux-kontext-block-probing")
@@ -84,6 +85,7 @@ def main() -> None:
         "scripts/verify_pilot_followup.py",
         "scripts/verify_formal_complete.py",
         "scripts/verify_alpha_scan.py",
+        "scripts/verify_dataset.py",
     ]
     required_outputs = ["raw_metrics.csv", "block_summary.csv", "stream_summary.csv", "selected_blocks.json"]
     required_block_columns = {
@@ -206,11 +208,16 @@ def main() -> None:
         check(
             "research dataset 20 discovery + 10 heldout per category",
             len(dataset) == 240
+            and dataset_sentinel_current(ROOT)
             and all(
                 data_counts[(category, "discovery")] == 20 and data_counts[(category, "heldout")] == 10
                 for category in config["dataset"]["categories"]
             ),
-            {f"{category}:{split}": count for (category, split), count in data_counts.items()},
+            {
+                "counts": {f"{category}:{split}": count for (category, split), count in data_counts.items()},
+                "dataset_sentinel_current": dataset_sentinel_current(ROOT),
+                "report": output_root / "preflight" / "dataset_report.json",
+            },
         ),
         check("formal baselines complete", mode_counts["baseline"] >= expected_discovery, dict(mode_counts)),
         check(
