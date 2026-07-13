@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=70", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "flux-kontext-block-probing"
+version = "0.1.0"
+description = "Independent text hidden-state block probing for FLUX.1-Kontext-dev"
+requires-python = ">=3.12"
+dependencies = [
+  "pyyaml",
+  "pandas",
+  "pyarrow",
+  "scipy",
+  "scikit-learn",
+  "matplotlib",
+  "seaborn",
+  "pillow",
+  "tqdm",
+  "psutil",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.setuptools]
+py-modules = ["interventions", "evaluators", "aggregate_results", "probe_flux_kontext_blocks"]
+

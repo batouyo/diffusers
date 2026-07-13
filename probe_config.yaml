@@ -1,0 +1,67 @@
+project:
+  name: flux-kontext-block-probing
+  run_id: main_512
+  code_root: /home/hyp/Code/flux-kontext-block-probing
+  output_root: /data15/hyp/project_storage/flux-kontext-block-probing
+  dataset_root: /data15/hyp/dataset/flux-kontext-block-probing
+  dataset_manifest: /home/hyp/Code/flux-kontext-block-probing/dataset.jsonl
+model:
+  path: /data15/hyp/weight/FLUX.1-Kontext-dev
+  revision: 24e9dedc4ef646698dc8eb4e18ae2cec3c9fea0d
+  diffusers_commit: 208704a27a6f362b67cd1a04fa1db0b98036d26f
+  dtype: bfloat16
+  local_files_only: true
+  cpu_offload: false
+inference:
+  resolution: 512
+  validation_resolution: 768
+  num_inference_steps: 28
+  guidance_scale: 2.5
+  true_cfg_scale: 1.0
+  max_sequence_length: 512
+  seeds: [42, 1234, 2025]
+  pilot_seed: 42
+  alpha: 1.5
+  alpha_grid: [1.1, 1.25, 1.5, 1.75, 2.0]
+  output_format: png
+dataset:
+  categories:
+    - color
+    - material_or_texture
+    - local_attribute
+    - shape_or_geometry
+    - pose_or_spatial_relation
+    - background_or_environment
+    - global_style
+    - lighting
+  discovery_per_category: 20
+  heldout_per_category: 10
+  pilot_per_category: 5
+probing:
+  stage2_blocks: 15
+  stage3_blocks: 10
+  min_candidates: 3
+  max_candidates: 8
+  forbidden_prior_blocks: [2, 7, 12, 17, 22]
+  random_control_sets: 20
+evaluation:
+  qwen_model: /data15/hyp/weight/huggingface/hub/models--Qwen--Qwen2.5-VL-7B-Instruct
+  dino_model: /data15/hyp/weight/huggingface/hub/models--facebook--dinov2-large
+  vlm_temperature: 0.0
+  vlm_max_new_tokens: 160
+  human_calibration_examples: 80
+statistics:
+  bootstrap_samples: 10000
+  random_seed: 20260714
+  bh_q: 0.05
+  universal_gain_min: 0.05
+  universal_drop_min: 0.05
+  universal_positive_categories: 6
+  universal_positive_sample_rate: 0.60
+  category_gain_min: 0.08
+  category_positive_sample_rate: 0.65
+  bad_image_rate_max: 0.01
+  dino_noninferiority_margin: -0.02
+  adjacent_distance: 2
+  redundancy_spearman: 0.90
+
