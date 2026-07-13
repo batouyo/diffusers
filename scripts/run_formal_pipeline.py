@@ -88,6 +88,7 @@ def main() -> None:
             json.dumps({"reason": "no block passed preregistered gain/drop/preservation gates"}, indent=2),
             encoding="utf-8",
         )
+        command("scripts/make_final_report.py")
         command("scripts/audit_completion.py")
         return
 
@@ -120,9 +121,9 @@ def main() -> None:
     command("evaluators.py", "--config", "probe_config.yaml", "--device", device)
     command("scripts/aggregate_joint.py", "--config", "probe_config.yaml")
     command("scripts/make_image_grids.py", "--config", "probe_config.yaml", "--split", "heldout")
+    command("scripts/make_final_report.py")
     command("scripts/audit_completion.py")
 
 
 if __name__ == "__main__":
     main()
-
