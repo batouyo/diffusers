@@ -243,6 +243,18 @@ def iter_metadata(run_root: Path):
                 yield path, value
 
 
+def reusable_evaluation(prior: dict, meta: dict, evaluator_hash: str, require_vlm: bool) -> bool:
+    """Return true only for a complete metric record from the current evaluator protocol."""
+    return bool(
+        prior.get("output_sha256") == meta.get("output_sha256")
+        and prior.get("evaluation_hash") == evaluator_hash
+        and prior.get("dino_similarity") is not None
+        and prior.get("lpips_distance") is not None
+        and prior.get("quality")
+        and (not require_vlm or (prior.get("vlm_parse_ok") is True and prior.get("s_edit") is not None))
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default="probe_config.yaml")
@@ -254,7 +266,10 @@ def main() -> None:
         help="UTF-8 file containing one metadata JSON path per line; order is preserved",
     )
     parser.add_argument("--skip-vlm", action="store_true")
+    parser.add_argument("--vlm-attempts", type=int, default=3)
     args = parser.parse_args()
+    if args.vlm_attempts < 1:
+        parser.error("--vlm-attempts must be at least 1")
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     config = yaml.safe_load(Path(args.config).read_text(encoding="utf-8"))
     run_id = args.run_id or config["project"]["run_id"]
@@ -286,15 +301,13 @@ def main() -> None:
     dino = DinoPreservation(config["evaluation"]["dino_model"], args.device)
     lpips_metric = LpipsDistance(args.device)
     evaluator_hash = evaluation_hash(config)
+    failures = []
     for index, (meta_path, meta) in enumerate(metadata, 1):
         eval_path = meta_path.with_suffix(".eval.json")
         if eval_path.exists():
             try:
                 prior = json.loads(eval_path.read_text(encoding="utf-8"))
-                if (
-                    prior.get("output_sha256") == meta.get("output_sha256")
-                    and prior.get("evaluation_hash") == evaluator_hash
-                ):
+                if reusable_evaluation(prior, meta, evaluator_hash, require_vlm=not args.skip_vlm):
                     continue
             except Exception:
                 pass
@@ -310,24 +323,49 @@ def main() -> None:
             "evaluation_hash": evaluator_hash,
         }
         if judge is not None:
-            try:
-                rubric, raw = judge.score(
-                    row["image"], meta["output_path"], row["instruction"], row["target_description"]
-                )
+            last_error = None
+            for attempt in range(1, args.vlm_attempts + 1):
+                try:
+                    rubric, raw = judge.score(
+                        row["image"], meta["output_path"], row["instruction"], row["target_description"]
+                    )
+                    result.update(
+                        {
+                            "s_edit": rubric["score_0_to_4"] / 4.0,
+                            "vlm_rubric": rubric,
+                            "vlm_raw": raw,
+                            "vlm_model": judge.model_path,
+                            "vlm_parse_ok": True,
+                            "vlm_attempts_used": attempt,
+                        }
+                    )
+                    break
+                except Exception as exc:
+                    last_error = exc
+                    LOGGER.warning(
+                        "VLM attempt %d/%d failed for %s: %r",
+                        attempt,
+                        args.vlm_attempts,
+                        meta["output_path"],
+                        exc,
+                    )
+            if not result.get("vlm_parse_ok"):
                 result.update(
                     {
-                        "s_edit": rubric["score_0_to_4"] / 4.0,
-                        "vlm_rubric": rubric,
-                        "vlm_raw": raw,
-                        "vlm_model": judge.model_path,
-                        "vlm_parse_ok": True,
+                        "s_edit": None,
+                        "vlm_parse_ok": False,
+                        "vlm_error": repr(last_error),
+                        "vlm_attempts_used": args.vlm_attempts,
                     }
                 )
-            except Exception as exc:
-                LOGGER.exception("VLM failed for %s", meta["output_path"])
-                result.update({"s_edit": None, "vlm_parse_ok": False, "vlm_error": repr(exc)})
+                failures.append(meta["output_path"])
         atomic_json(eval_path, result)
         LOGGER.info("[%d/%d] evaluated %s", index, len(metadata), meta["output_path"])
+    if failures:
+        raise RuntimeError(
+            f"VLM evaluation failed after {args.vlm_attempts} attempts for "
+            f"{len(failures)} outputs; first failures: {failures[:5]}"
+        )
 
 
 if __name__ == "__main__":

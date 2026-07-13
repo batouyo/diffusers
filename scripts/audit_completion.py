@@ -10,6 +10,8 @@ from pathlib import Path
 
 import yaml
 
+from evaluators import evaluation_hash
+
 
 ROOT = Path("/home/hyp/Code/flux-kontext-block-probing")
 
@@ -42,7 +44,24 @@ def main() -> None:
         if value.get("status") == "complete":
             metadata.append(value)
     mode_counts = Counter(value.get("mode") for value in metadata)
-    eval_count = len(list((run_root / "images").rglob("*.eval.json"))) if (run_root / "images").exists() else 0
+    eval_paths = list((run_root / "images").rglob("*.eval.json")) if (run_root / "images").exists() else []
+    eval_count = len(eval_paths)
+    expected_evaluation_hash = evaluation_hash(config)
+    valid_eval_count = 0
+    for path in eval_paths:
+        try:
+            evaluation = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if (
+            evaluation.get("evaluation_hash") == expected_evaluation_hash
+            and evaluation.get("vlm_parse_ok") is True
+            and evaluation.get("s_edit") is not None
+            and evaluation.get("dino_similarity") is not None
+            and evaluation.get("lpips_distance") is not None
+            and evaluation.get("quality")
+        ):
+            valid_eval_count += 1
     required_code = [
         "probe_config.yaml",
         "dataset.jsonl",
@@ -115,7 +134,7 @@ def main() -> None:
             "independent required source files and commit-bound tests",
             all((ROOT / path).exists() for path in required_code)
             and test_report.get("status") == "pass"
-            and int(test_report.get("passed_tests") or 0) >= 16
+            and int(test_report.get("passed_tests") or 0) >= 18
             and test_report.get("git_commit") == current_commit,
             {
                 "required_code": required_code,
@@ -158,7 +177,16 @@ def main() -> None:
             mode_counts["remove_block"] >= expected_discovery * config["probing"]["stage3_blocks"],
             dict(mode_counts),
         ),
-        check("all generated outputs evaluated", bool(metadata) and eval_count >= len(metadata), {"generated": len(metadata), "evaluated": eval_count}),
+        check(
+            "all generated outputs evaluated with current evaluator and valid metrics",
+            bool(metadata) and eval_count >= len(metadata) and valid_eval_count >= len(metadata),
+            {
+                "generated": len(metadata),
+                "evaluation_files": eval_count,
+                "valid_current_evaluations": valid_eval_count,
+                "expected_evaluation_hash": expected_evaluation_hash,
+            },
+        ),
         check(
             "required metric tables and protocol columns",
             metric_tables_complete,

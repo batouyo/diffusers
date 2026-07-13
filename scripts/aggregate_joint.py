@@ -13,6 +13,7 @@ import seaborn as sns
 import yaml
 
 from aggregate_results import cluster_macro, stratified_bootstrap
+from evaluators import evaluation_hash
 
 
 def load_joint(run_root: Path) -> pd.DataFrame:
@@ -38,6 +39,8 @@ def load_joint(run_root: Path) -> pd.DataFrame:
                     or quality.get("all_white", False)
                     or quality.get("severe_saturation", False)
                 ),
+                "vlm_parse_ok": evaluation.get("vlm_parse_ok"),
+                "evaluation_hash": evaluation.get("evaluation_hash"),
             }
         )
     frame = pd.DataFrame(rows)
@@ -85,6 +88,16 @@ def main() -> None:
     frame = load_joint(run_root)
     if frame.empty:
         raise RuntimeError("no evaluated joint-validation outputs")
+    expected_evaluation_hash = evaluation_hash(config)
+    invalid_metrics = frame[
+        (frame["evaluation_hash"] != expected_evaluation_hash)
+        | (frame["vlm_parse_ok"] != True)
+        | frame[["s_edit", "s_preserve", "lpips_distance"]].isna().any(axis=1)
+    ]
+    if not invalid_metrics.empty:
+        raise RuntimeError(
+            f"joint validation has {len(invalid_metrics)} stale or invalid evaluations"
+        )
     selection = json.loads((run_root / "selected_blocks.json").read_text(encoding="utf-8"))
     candidates = sorted(int(value) for value in selection.get("selected_global_blocks", []))
     if not candidates:
