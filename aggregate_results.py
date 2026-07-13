@@ -105,7 +105,10 @@ def summarize_blocks(frame: pd.DataFrame, config: dict) -> pd.DataFrame:
     if block_rows.empty:
         return pd.DataFrame()
     for global_index, group in block_rows.groupby("global_block_index"):
-        enhance = group[group["mode"] == "enhance_text"]
+        enhance = group[
+            (group["mode"] == "enhance_text")
+            & np.isclose(group["alpha"].astype(float), float(config["inference"]["alpha"]))
+        ]
         disable = group[group["mode"] == "disable_text"]
         gain = cluster_macro(enhance, "semantic_gain")
         drop = cluster_macro(disable, "semantic_drop")
@@ -196,7 +199,10 @@ def select_candidates(summary: pd.DataFrame, frame: pd.DataFrame, config: dict) 
             break
 
     category_specific = {}
-    enhance = frame[frame["mode"] == "enhance_text"]
+    enhance = frame[
+        (frame["mode"] == "enhance_text")
+        & np.isclose(frame["alpha"].astype(float), float(config["inference"]["alpha"]))
+    ]
     for (global_index, category), group in enhance.groupby(["global_block_index", "category"]):
         per_sample = group.groupby("sample_id")["semantic_gain"].mean().dropna()
         if len(per_sample) < 2:
@@ -223,7 +229,7 @@ def select_candidates(summary: pd.DataFrame, frame: pd.DataFrame, config: dict) 
     }
 
 
-def plot_curves(summary: pd.DataFrame, frame: pd.DataFrame, output: Path) -> None:
+def plot_curves(summary: pd.DataFrame, frame: pd.DataFrame, config: dict, output: Path) -> None:
     output.mkdir(parents=True, exist_ok=True)
     if summary.empty:
         return
@@ -243,7 +249,10 @@ def plot_curves(summary: pd.DataFrame, frame: pd.DataFrame, output: Path) -> Non
         plt.tight_layout()
         plt.savefig(output / f"{name}_vs_global_block.png", dpi=180)
         plt.close()
-    enhance = frame[frame["mode"] == "enhance_text"].dropna(subset=["semantic_gain"])
+    all_enhance = frame[frame["mode"] == "enhance_text"].dropna(subset=["semantic_gain"])
+    enhance = all_enhance[
+        np.isclose(all_enhance["alpha"].astype(float), float(config["inference"]["alpha"]))
+    ]
     if not enhance.empty:
         category_curve = enhance.groupby(["category", "global_block_index"], as_index=False)["semantic_gain"].mean()
         plt.figure(figsize=(14, 7))
@@ -259,7 +268,7 @@ def plot_curves(summary: pd.DataFrame, frame: pd.DataFrame, output: Path) -> Non
         plt.tight_layout()
         plt.savefig(output / "category_block_response_curves.png", dpi=180)
         plt.close()
-        alpha_curve = enhance.groupby(["global_block_index", "alpha"], as_index=False)["semantic_gain"].mean()
+        alpha_curve = all_enhance.groupby(["global_block_index", "alpha"], as_index=False)["semantic_gain"].mean()
         if alpha_curve["alpha"].nunique() > 1:
             plt.figure(figsize=(10, 6))
             sns.lineplot(data=alpha_curve, x="alpha", y="semantic_gain", hue="global_block_index", marker="o")
@@ -286,7 +295,19 @@ def main() -> None:
     (run_root / "selected_blocks.json").write_text(
         json.dumps(selected, ensure_ascii=False, indent=2), encoding="utf-8"
     )
-    plot_curves(summary, frame, run_root / "plots")
+    alpha_rows = frame[frame["mode"] == "enhance_text"].dropna(subset=["semantic_gain"])
+    if not alpha_rows.empty:
+        alpha_summary = (
+            alpha_rows.groupby(["global_block_index", "alpha"], as_index=False)
+            .agg(
+                semantic_gain=("semantic_gain", "mean"),
+                preservation_cost=("preservation_cost", "mean"),
+                positive_rate=("semantic_gain", lambda values: float((values > 0).mean())),
+                bad_image_rate=("bad_image", "mean"),
+            )
+        )
+        alpha_summary.to_csv(run_root / "alpha_summary.csv", index=False)
+    plot_curves(summary, frame, config, run_root / "plots")
     print(json.dumps(selected, ensure_ascii=False, indent=2))
 
 
