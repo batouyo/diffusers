@@ -12,6 +12,7 @@ import yaml
 
 from evaluators import evaluation_hash
 from verify_pilot_complete import sentinel_current
+from verify_pilot_followup import sentinel_current as followup_sentinel_current
 
 
 ROOT = Path("/home/hyp/Code/flux-kontext-block-probing")
@@ -75,6 +76,7 @@ def main() -> None:
         "tests/test_joint_validation.py",
         "tests/test_expected_counts.py",
         "scripts/verify_pilot_complete.py",
+        "scripts/verify_pilot_followup.py",
     ]
     required_outputs = ["raw_metrics.csv", "block_summary.csv", "stream_summary.csv", "selected_blocks.json"]
     required_block_columns = {
@@ -200,13 +202,15 @@ def main() -> None:
             bool(metadata)
             and eval_count >= len(metadata)
             and valid_eval_count >= len(metadata)
-            and sentinel_current(ROOT),
+            and sentinel_current(ROOT)
+            and followup_sentinel_current(ROOT),
             {
                 "generated": len(metadata),
                 "evaluation_files": eval_count,
                 "valid_current_evaluations": valid_eval_count,
                 "expected_evaluation_hash": expected_evaluation_hash,
                 "pilot_pipeline_sentinel_current": sentinel_current(ROOT),
+                "pilot_followup_sentinel_current": followup_sentinel_current(ROOT),
             },
         ),
         check(

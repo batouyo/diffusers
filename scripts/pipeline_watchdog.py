@@ -15,6 +15,7 @@ from pathlib import Path
 
 from expected_counts import load_counts
 from verify_pilot_complete import sentinel_current
+from verify_pilot_followup import sentinel_current as followup_sentinel_current
 
 
 ROOT = Path("/home/hyp/Code/flux-kontext-block-probing")
@@ -108,12 +109,14 @@ def main() -> None:
         )
         pilot_report_ready = (RUN_ROOT / "PILOT_REPORT.md").exists()
         pilot_verified = sentinel_current(ROOT)
+        followup_verified = followup_sentinel_current(ROOT) if stage3_ready else False
         status_payload = {
             "updated_at_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "pilot_png": png_count,
             "pilot_expected": pilot_expected,
             "pilot_eval": eval_count,
             "pilot_verified": pilot_verified,
+            "followup_verified": followup_verified,
             "sessions": {
                 "pilot": pilot,
                 "followup": followup,
@@ -134,7 +137,7 @@ def main() -> None:
             f"pilot_png={png_count}/{pilot_expected} pilot_eval={eval_count}/{pilot_expected} "
             f"pilot_session={pilot} followup_session={followup} stage3_ready={stage3_ready} "
             f"pilot_verified={pilot_verified} alpha_ready={alpha_ready} "
-            f"calibration_ready={calibration_ready} gate={calibration_gate}"
+            f"followup_verified={followup_verified} calibration_ready={calibration_ready} gate={calibration_gate}"
         )
 
         if audit_complete():
@@ -149,14 +152,14 @@ def main() -> None:
             not pilot
             and pilot_verified
             and not followup
-            and not stage3_ready
+            and not followup_verified
             and followup_restarts < MAX_RESTARTS
         ):
             followup_restarts += 1
             start_session("flux_probe_followup", str(ROOT / "scripts" / "run_after_pilot.sh"))
 
         if (
-            stage3_ready
+            followup_verified
             and not followup
             and not alpha_ready
             and not alpha
@@ -177,7 +180,7 @@ def main() -> None:
             )
 
         if (
-            stage3_ready
+            followup_verified
             and not pilot_report_ready
             and not report
             and report_restarts < MAX_RESTARTS
