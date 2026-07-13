@@ -20,7 +20,8 @@ The project does not import code, manifests, candidate blocks, or results from e
 4. Stage 1 probes one block at a time. Multi-block hooks are enabled only in the explicitly separate joint-validation phase.
 5. Candidate selection requires gain, disable loss, bootstrap confidence, preservation, bad-image, category, seed, and correlated-adjacency redundancy gates. No minimum top-k is forced.
 6. A complete negative joint result and a preregistered no-go are valid scientific outcomes, but both require complete execution evidence.
-7. The final completion audit must pass all 15 requirements; file presence alone is insufficient.
+7. Every stage writes a protocol-hash-bound completion sentinel only after exact logical-job, evaluator-hash, and image-checksum verification.
+8. The final completion audit must pass all 16 requirements; file presence alone is insufficient.
 
 ## Reproduce the preflight
 
@@ -70,11 +71,15 @@ cd /home/hyp/Code/flux-kontext-block-probing
 
 The locked 40-example validation subset must reach Spearman correlation at least 0.7. The formal pipeline waits for a hash-recorded `calibration_report.json` with `gate_pass: true`; it does not bypass a failed or incomplete human gate.
 
+The 80 items are balanced within every category: each 5-item half contains one baseline and four enhanced outputs. `bundle_manifest.json` binds the locked metadata list, evaluator protocol, source/output checksums, portable archive, and all immutable CSV fields. Human score and evidence are the only fields that may change.
+
 ## Acceptance artifacts
 
 Primary outputs under `main_512` are:
 
 - `raw_metrics.csv`, `block_summary.csv`, `stream_summary.csv`, `alpha_summary.csv`
+- `pilot_pipeline_complete.json`, `pilot_followup_complete.json`, `pilot_alpha_complete.json`, and `formal_discovery_complete.json`
+- `formal_alpha_complete.json` when formal candidates exist
 - `selected_blocks.json`, `stage3_blocks.json`, and `selected_alpha.json` when applicable
 - `joint_metrics.csv`, `joint_summary.csv`, `joint_category_summary.csv`, `joint_seed_summary.csv`, `joint_validation.json` when candidates exist
 - `FORMAL_NO_GO.json` when no block clears all preregistered gates
