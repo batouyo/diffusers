@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import torch
 
-from scripts.run_joint_validation import arms, random_controls
+from scripts.run_joint_validation import arms, joint_hash, random_controls
 
 
 class ToyTransformer:
@@ -32,3 +32,16 @@ def test_arms_include_required_controls_and_budget_match():
     assert len([name for name in lookup if name.startswith("random_")]) == 3
     assert lookup["candidate_disable_g000"][0] == "disable_text"
     assert lookup["all_blocks_budget_matched"][2] == 1.0 + 2 / 10 * 0.5
+
+
+def test_joint_hash_changes_when_random_arm_definition_changes():
+    config = {
+        "project": {"dataset_manifest": "missing-test-manifest.jsonl"},
+        "inference": {"seeds": [42, 1234, 2025]},
+    }
+    common = [("baseline", "none", tuple(), 1.0)]
+    first = common + [("random_00", "enhance_text", (1, 4), 1.5)]
+    second = common + [("random_00", "enhance_text", (2, 5), 1.5)]
+    first_hash = joint_hash(config, [0, 6], 1.5, first, "heldout", 512)
+    second_hash = joint_hash(config, [0, 6], 1.5, second, "heldout", 512)
+    assert first_hash != second_hash

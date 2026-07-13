@@ -85,6 +85,43 @@ def main() -> None:
     frame = load_joint(run_root)
     if frame.empty:
         raise RuntimeError("no evaluated joint-validation outputs")
+    selection = json.loads((run_root / "selected_blocks.json").read_text(encoding="utf-8"))
+    candidates = sorted(int(value) for value in selection.get("selected_global_blocks", []))
+    if not candidates:
+        raise RuntimeError("joint aggregation requires a non-empty independently selected candidate set")
+    dataset = [
+        json.loads(line)
+        for line in Path(config["project"]["dataset_manifest"]).read_text(encoding="utf-8").splitlines()
+    ]
+    heldout_rows = [row for row in dataset if row["split"] == "heldout"]
+    expected_per_arm = len(heldout_rows) * len(config["inference"]["seeds"])
+    random_arms = [f"random_{index:02d}" for index in range(config["probing"]["random_control_sets"])]
+    expected_arms = {
+        "baseline",
+        *(f"candidate_single_g{index:03d}" for index in candidates),
+        f"candidate_disable_g{candidates[0]:03d}",
+        "candidate_combo",
+        *random_arms,
+        "all_blocks",
+        "all_blocks_budget_matched",
+        "textailor_flux1dev_control",
+    }
+    observed_arms = set(frame["arm"])
+    if observed_arms != expected_arms:
+        raise RuntimeError(
+            f"joint arm mismatch: missing={sorted(expected_arms - observed_arms)}, "
+            f"unexpected={sorted(observed_arms - expected_arms)}"
+        )
+    arm_counts = frame["arm"].value_counts().to_dict()
+    incomplete = {arm: arm_counts.get(arm, 0) for arm in expected_arms if arm_counts.get(arm, 0) != expected_per_arm}
+    if incomplete:
+        raise RuntimeError(f"joint evaluation incomplete; expected {expected_per_arm} per arm: {incomplete}")
+    key_columns = ["arm", "sample_id", "seed", "resolution"]
+    if frame.duplicated(key_columns).any():
+        raise RuntimeError("duplicate evaluated joint jobs detected")
+    joint_hashes = set(frame["joint_hash"].dropna())
+    if len(joint_hashes) != 1:
+        raise RuntimeError(f"joint outputs do not share one protocol fingerprint: {sorted(joint_hashes)}")
     frame.to_csv(run_root / "joint_metrics.csv", index=False)
     summaries = []
     for arm, group in frame.groupby("arm"):
@@ -112,6 +149,28 @@ def main() -> None:
         )
     summary = pd.DataFrame(summaries).sort_values("semantic_gain", ascending=False)
     summary.to_csv(run_root / "joint_summary.csv", index=False)
+    category_summary = (
+        frame.groupby(["arm", "category"], as_index=False)
+        .agg(
+            semantic_gain=("semantic_gain", "mean"),
+            preservation_delta=("preservation_delta", "mean"),
+            lpips_cost=("lpips_cost", "mean"),
+            bad_image_rate=("bad_image", "mean"),
+            n=("sample_id", "size"),
+        )
+    )
+    category_summary.to_csv(run_root / "joint_category_summary.csv", index=False)
+    seed_summary = (
+        frame.groupby(["arm", "seed"], as_index=False)
+        .agg(
+            semantic_gain=("semantic_gain", "mean"),
+            preservation_delta=("preservation_delta", "mean"),
+            lpips_cost=("lpips_cost", "mean"),
+            bad_image_rate=("bad_image", "mean"),
+            n=("sample_id", "size"),
+        )
+    )
+    seed_summary.to_csv(run_root / "joint_seed_summary.csv", index=False)
     lookup = summary.set_index("arm")
     candidate_gain = float(lookup.loc["candidate_combo", "semantic_gain"])
     random_values = summary[summary["arm"].str.startswith("random_")]["semantic_gain"].to_numpy()
@@ -127,19 +186,41 @@ def main() -> None:
         if arm in set(frame["arm"])
     }
     candidate = lookup.loc["candidate_combo"]
+    candidate_seed_means = {
+        str(int(row["seed"])): float(row["semantic_gain"])
+        for _, row in seed_summary[seed_summary["arm"] == "candidate_combo"].iterrows()
+    }
+    candidate_category_means = {
+        str(row["category"]): float(row["semantic_gain"])
+        for _, row in category_summary[category_summary["arm"] == "candidate_combo"].iterrows()
+    }
+    all_seed_means_positive = len(candidate_seed_means) == len(config["inference"]["seeds"]) and all(
+        value > 0 for value in candidate_seed_means.values()
+    )
     success = bool(
-        empirical_p <= 1 / 21
+        empirical_p <= 1 / (config["probing"]["random_control_sets"] + 1)
         and all(value["ci_low"] > 0 for value in comparisons.values())
         and candidate["preservation_ci_low"] >= config["statistics"]["dino_noninferiority_margin"]
         and candidate["bad_image_rate"] <= config["statistics"]["bad_image_rate_max"]
+        and all_seed_means_positive
     )
     result = {
+        "execution_status": "complete",
         "status": "validated" if success else "not_validated",
+        "protocol_fingerprint": next(iter(joint_hashes)),
+        "expected_per_arm": expected_per_arm,
+        "expected_total": expected_per_arm * len(expected_arms),
+        "evaluated_total": int(len(frame)),
+        "arm_counts": {arm: int(arm_counts[arm]) for arm in sorted(arm_counts)},
         "candidate_combo_semantic_gain": candidate_gain,
         "random_empirical_p": empirical_p,
         "comparisons": comparisons,
         "preservation_ci_low": float(candidate["preservation_ci_low"]),
         "bad_image_rate": float(candidate["bad_image_rate"]),
+        "candidate_seed_semantic_gain": candidate_seed_means,
+        "all_seed_means_positive": all_seed_means_positive,
+        "candidate_category_semantic_gain": candidate_category_means,
+        "positive_category_count": sum(value > 0 for value in candidate_category_means.values()),
     }
     (run_root / "joint_validation.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
     plot = summary[

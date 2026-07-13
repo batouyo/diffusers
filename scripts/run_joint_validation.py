@@ -96,12 +96,26 @@ def output_paths(config: dict, job: JointJob) -> tuple[Path, Path]:
     return folder / f"{stem}.png", folder / f"{stem}.json"
 
 
-def joint_hash(config: dict, candidates: list[int], alpha: float) -> str:
+def joint_hash(
+    config: dict,
+    candidates: list[int],
+    alpha: float,
+    arm_list: list[tuple[str, str, tuple[int, ...], float]],
+    split: str,
+    resolution: int,
+) -> str:
     value = {
         "experiment_hash": experiment_hash(config),
         "script_sha256": file_sha256(__file__),
         "candidates": candidates,
         "alpha": alpha,
+        "split": split,
+        "resolution": resolution,
+        "seeds": list(config["inference"]["seeds"]),
+        "arms": [
+            {"name": name, "mode": mode, "blocks": list(blocks), "alpha": arm_alpha}
+            for name, mode, blocks, arm_alpha in arm_list
+        ],
     }
     return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
 
@@ -151,7 +165,9 @@ def run(args) -> None:
                     )
                 )
     jobs = [job for index, job in enumerate(jobs) if index % args.num_shards == args.shard_id]
-    fingerprint = joint_hash(config, candidates, args.alpha)
+    fingerprint = joint_hash(
+        config, candidates, args.alpha, arm_list, args.split, int(resolution)
+    )
     dtype = getattr(torch, config["model"]["dtype"])
     for ordinal, job in enumerate(jobs, 1):
         image_path, meta_path = output_paths(config, job)
