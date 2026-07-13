@@ -11,6 +11,7 @@ from pathlib import Path
 import yaml
 
 from evaluators import evaluation_hash
+from verify_pilot_complete import sentinel_current
 
 
 ROOT = Path("/home/hyp/Code/flux-kontext-block-probing")
@@ -73,6 +74,7 @@ def main() -> None:
         "tests/test_aggregation.py",
         "tests/test_joint_validation.py",
         "tests/test_expected_counts.py",
+        "scripts/verify_pilot_complete.py",
     ]
     required_outputs = ["raw_metrics.csv", "block_summary.csv", "stream_summary.csv", "selected_blocks.json"]
     required_block_columns = {
@@ -195,12 +197,16 @@ def main() -> None:
         ),
         check(
             "all generated outputs evaluated with current evaluator and valid metrics",
-            bool(metadata) and eval_count >= len(metadata) and valid_eval_count >= len(metadata),
+            bool(metadata)
+            and eval_count >= len(metadata)
+            and valid_eval_count >= len(metadata)
+            and sentinel_current(ROOT),
             {
                 "generated": len(metadata),
                 "evaluation_files": eval_count,
                 "valid_current_evaluations": valid_eval_count,
                 "expected_evaluation_hash": expected_evaluation_hash,
+                "pilot_pipeline_sentinel_current": sentinel_current(ROOT),
             },
         ),
         check(

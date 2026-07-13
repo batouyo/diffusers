@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from expected_counts import load_counts
+from verify_pilot_complete import sentinel_current
 
 
 ROOT = Path("/home/hyp/Code/flux-kontext-block-probing")
@@ -106,11 +107,13 @@ def main() -> None:
             RUN_ROOT / "calibration" / "calibration_report.json", "gate_pass"
         )
         pilot_report_ready = (RUN_ROOT / "PILOT_REPORT.md").exists()
+        pilot_verified = sentinel_current(ROOT)
         status_payload = {
             "updated_at_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "pilot_png": png_count,
             "pilot_expected": pilot_expected,
             "pilot_eval": eval_count,
+            "pilot_verified": pilot_verified,
             "sessions": {
                 "pilot": pilot,
                 "followup": followup,
@@ -130,21 +133,21 @@ def main() -> None:
         log(
             f"pilot_png={png_count}/{pilot_expected} pilot_eval={eval_count}/{pilot_expected} "
             f"pilot_session={pilot} followup_session={followup} stage3_ready={stage3_ready} "
-            f"alpha_ready={alpha_ready} calibration_ready={calibration_ready} gate={calibration_gate}"
+            f"pilot_verified={pilot_verified} alpha_ready={alpha_ready} "
+            f"calibration_ready={calibration_ready} gate={calibration_gate}"
         )
 
         if audit_complete():
             log("completion audit is complete; watchdog exiting")
             return
 
-        pilot_incomplete = png_count < pilot_expected or eval_count < pilot_expected
+        pilot_incomplete = not pilot_verified
         if not pilot and pilot_incomplete and pilot_restarts < MAX_RESTARTS:
             pilot_restarts += 1
             start_session("flux_probe_pilot", str(ROOT / "scripts" / "run_pilot_pipeline.sh"))
         elif (
             not pilot
-            and png_count >= pilot_expected
-            and eval_count >= pilot_expected
+            and pilot_verified
             and not followup
             and not stage3_ready
             and followup_restarts < MAX_RESTARTS
@@ -163,7 +166,7 @@ def main() -> None:
             start_session("flux_probe_alpha", str(ROOT / "scripts" / "run_alpha_after_followup.sh"))
 
         if (
-            eval_count >= pilot_expected
+            pilot_verified
             and not calibration_ready
             and not calibration
             and calibration_restarts < MAX_RESTARTS

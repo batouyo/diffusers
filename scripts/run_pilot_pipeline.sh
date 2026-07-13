@@ -24,3 +24,6 @@ export CUDA_VISIBLE_DEVICES=GPU-2cd22c91-025f-16c6-f54a-0947f721d15e
 
 .venv/bin/python aggregate_results.py \
   --config probe_config.yaml > logs/pilot_aggregate.log 2>&1
+
+.venv/bin/python scripts/verify_pilot_complete.py \
+  > logs/pilot_verify.log 2>&1
