@@ -7,7 +7,13 @@ from aggregate_results import benjamini_hochberg, paired_metrics, select_candida
 
 
 def test_paired_metrics_include_disable_and_remove_effects() -> None:
-    common = {"sample_id": "s1", "seed": 42, "resolution": 512}
+    common = {
+        "sample_id": "s1",
+        "seed": 42,
+        "resolution": 512,
+        "latent_hash": "same-latent",
+        "source_sha256": "same-source",
+    }
     frame = pd.DataFrame(
         [
             {**common, "mode": "baseline", "s_edit": 0.5, "s_preserve": 0.9, "lpips_distance": 0.1},
@@ -22,6 +28,25 @@ def test_paired_metrics_include_disable_and_remove_effects() -> None:
     assert np.isclose(result.loc["remove_block", "removal_edit_drop"], 0.4)
     assert np.isclose(result.loc["enhance_text", "preservation_cost"], 0.05)
     assert np.isclose(result.loc["remove_block", "removal_preservation_cost"], 0.3)
+
+
+def test_paired_metrics_reject_latent_or_source_mismatch() -> None:
+    common = {
+        "sample_id": "s1",
+        "seed": 42,
+        "resolution": 512,
+        "source_sha256": "source",
+        "s_preserve": 0.9,
+        "lpips_distance": 0.1,
+    }
+    frame = pd.DataFrame(
+        [
+            {**common, "mode": "baseline", "s_edit": 0.5, "latent_hash": "baseline-latent"},
+            {**common, "mode": "enhance_text", "s_edit": 0.8, "latent_hash": "different-latent"},
+        ]
+    )
+    with np.testing.assert_raises_regex(RuntimeError, "latent_hash mismatch"):
+        paired_metrics(frame)
 
 
 def test_candidate_selection_enforces_preservation_and_correlated_adjacency_dedup() -> None:

@@ -13,8 +13,10 @@ import seaborn as sns
 import yaml
 from scipy.stats import wilcoxon
 
+from evaluators import evaluation_hash, reusable_evaluation
 
-def read_records(run_root: Path) -> pd.DataFrame:
+
+def read_records(run_root: Path, expected_evaluation_hash: str | None = None) -> pd.DataFrame:
     rows = []
     for meta_path in sorted((run_root / "images").rglob("*.json")):
         if meta_path.name.endswith(".eval.json"):
@@ -28,7 +30,11 @@ def read_records(run_root: Path) -> pd.DataFrame:
         eval_path = meta_path.with_suffix(".eval.json")
         evaluation = {}
         if eval_path.exists():
-            evaluation = json.loads(eval_path.read_text(encoding="utf-8"))
+            candidate = json.loads(eval_path.read_text(encoding="utf-8"))
+            if expected_evaluation_hash is None or reusable_evaluation(
+                candidate, meta, expected_evaluation_hash, require_vlm=True
+            ):
+                evaluation = candidate
         quality = evaluation.get("quality", {})
         rows.append(
             {
@@ -52,15 +58,30 @@ def paired_metrics(frame: pd.DataFrame) -> pd.DataFrame:
     if frame.empty or frame["s_edit"].isna().all():
         return frame
     keys = ["sample_id", "seed", "resolution"]
-    base = frame[frame["mode"] == "baseline"][keys + ["s_edit", "s_preserve", "lpips_distance"]].drop_duplicates(keys)
+    base_columns = keys + ["s_edit", "s_preserve", "lpips_distance"]
+    hash_columns = [column for column in ["latent_hash", "source_sha256"] if column in frame.columns]
+    base_rows = frame[frame["mode"] == "baseline"]
+    if base_rows.duplicated(keys).any():
+        raise RuntimeError("duplicate baseline records would make paired metrics ambiguous")
+    base = base_rows[base_columns + hash_columns]
     base = base.rename(
         columns={
             "s_edit": "s_edit_base",
             "s_preserve": "s_preserve_base",
             "lpips_distance": "lpips_distance_base",
+            **{column: f"{column}_base" for column in hash_columns},
         }
     )
     merged = frame.merge(base, on=keys, how="left")
+    scored = merged["s_edit"].notna()
+    if scored.any() and merged.loc[scored, "s_edit_base"].isna().any():
+        raise RuntimeError("evaluated intervention record is missing its paired baseline")
+    for column in hash_columns:
+        comparable = scored & merged[column].notna() & merged[f"{column}_base"].notna()
+        if comparable.any() and (
+            merged.loc[comparable, column] != merged.loc[comparable, f"{column}_base"]
+        ).any():
+            raise RuntimeError(f"paired baseline/intervention {column} mismatch")
     merged["semantic_gain"] = np.where(
         merged["mode"] == "enhance_text", merged["s_edit"] - merged["s_edit_base"], np.nan
     )
@@ -452,7 +473,7 @@ def main() -> None:
     run_id = args.run_id or config["project"]["run_id"]
     run_root = Path(config["project"]["output_root"]) / run_id
     run_root.mkdir(parents=True, exist_ok=True)
-    frame = paired_metrics(read_records(run_root))
+    frame = paired_metrics(read_records(run_root, evaluation_hash(config)))
     frame.to_csv(run_root / "raw_metrics.csv", index=False)
     summary = summarize_blocks(frame, config)
     summary.to_csv(run_root / "block_summary.csv", index=False)
