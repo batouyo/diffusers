@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import json
 
+import pandas as pd
 import pytest
 import torch
 
 from probe_flux_kontext_blocks import file_sha256
-from scripts.aggregate_joint import load_joint
+from scripts.aggregate_joint import load_joint, validate_joint_pairing
 from scripts.run_joint_validation import arms, joint_hash, random_controls
 
 
@@ -94,3 +95,15 @@ def test_joint_loader_requires_current_evaluation_and_matching_image_checksum(tm
     evaluation_path.write_text(json.dumps(evaluation), encoding="utf-8")
     with pytest.raises(RuntimeError, match="stale or incomplete"):
         load_joint(tmp_path, "current-evaluator")
+
+
+def test_joint_pairing_rejects_latent_mismatch():
+    common = {"sample_id": "sample", "seed": 42, "resolution": 512, "source_sha256": "source"}
+    frame = pd.DataFrame(
+        [
+            {**common, "arm": "baseline", "latent_hash": "latent-a"},
+            {**common, "arm": "candidate_combo", "latent_hash": "latent-b"},
+        ]
+    )
+    with pytest.raises(RuntimeError, match="latent_hash mismatch"):
+        validate_joint_pairing(frame)

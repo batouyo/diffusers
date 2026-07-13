@@ -76,6 +76,26 @@ def load_joint(run_root: Path, expected_evaluation_hash: str) -> pd.DataFrame:
     return frame
 
 
+def validate_joint_pairing(frame: pd.DataFrame) -> None:
+    """Require every joint arm to share source and initial latent hashes with its baseline."""
+    keys = ["sample_id", "seed", "resolution"]
+    baseline = frame[frame["arm"] == "baseline"]
+    if baseline.duplicated(keys).any():
+        raise RuntimeError("duplicate joint baselines make latent/source pairing ambiguous")
+    required = ["latent_hash", "source_sha256"]
+    if any(column not in frame.columns for column in required):
+        raise RuntimeError("joint metadata is missing latent/source hashes")
+    lookup = baseline[keys + required].rename(
+        columns={column: f"{column}_base" for column in required}
+    )
+    paired = frame.merge(lookup, on=keys, how="left")
+    if paired[[f"{column}_base" for column in required]].isna().to_numpy().any():
+        raise RuntimeError("joint arm is missing its paired baseline hashes")
+    for column in required:
+        if (paired[column] != paired[f"{column}_base"]).any():
+            raise RuntimeError(f"joint baseline/arm {column} mismatch")
+
+
 def paired_difference(frame: pd.DataFrame, left_arm: str, right_arm: str, config: dict) -> dict:
     keys = ["sample_id", "seed", "category"]
     left = frame[frame["arm"] == left_arm][keys + ["s_edit"]].rename(columns={"s_edit": "left"})
@@ -103,6 +123,7 @@ def main() -> None:
     frame = load_joint(run_root, expected_evaluation_hash)
     if frame.empty:
         raise RuntimeError("no evaluated joint-validation outputs")
+    validate_joint_pairing(frame)
     invalid_metrics = frame[
         (frame["evaluation_hash"] != expected_evaluation_hash)
         | (frame["vlm_parse_ok"] != True)
