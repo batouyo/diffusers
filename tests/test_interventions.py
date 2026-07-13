@@ -4,6 +4,7 @@ import pytest
 import torch
 
 from interventions import TextBlockIntervention, assert_no_active_interventions, resolve_block
+from probe_flux_kontext_blocks import packed_noise_latents
 
 
 class ToyBlock(torch.nn.Module):
@@ -153,3 +154,24 @@ def test_token_mask_broadcast(values):
     expected = encoder.clone()
     expected[:, [0, 2]] *= 2
     assert torch.equal(captured["encoder"], expected)
+
+
+def test_same_seed_recreates_identical_initial_noise():
+    class DummyPipe:
+        vae_scale_factor = 8
+
+        class transformer:
+            class config:
+                in_channels = 64
+
+        @staticmethod
+        def _pack_latents(latents, batch_size, channels, height, width):
+            assert latents.shape == (batch_size, channels, height, width)
+            return latents.clone()
+
+    pipe = DummyPipe()
+    first = packed_noise_latents(pipe, 64, 42, torch.float32, "cpu")
+    repeated = packed_noise_latents(pipe, 64, 42, torch.float32, "cpu")
+    different = packed_noise_latents(pipe, 64, 43, torch.float32, "cpu")
+    assert torch.equal(first, repeated)
+    assert not torch.equal(first, different)
