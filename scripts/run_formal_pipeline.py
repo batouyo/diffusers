@@ -117,6 +117,7 @@ def main() -> None:
         "--candidates",
         ",".join(map(str, candidates)),
     )
+    command("scripts/verify_alpha_scan.py", "--scope", "formal")
     alpha = select_alpha(config, candidates)
     (run_root / "selected_alpha.json").write_text(json.dumps({"alpha": alpha}, indent=2), encoding="utf-8")
     command(

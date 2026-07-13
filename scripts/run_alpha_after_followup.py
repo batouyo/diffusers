@@ -30,16 +30,10 @@ def main() -> None:
         cwd=ROOT,
         check=True,
     )
-    (path.parent / "pilot_alpha_complete.json").write_text(
-        json.dumps(
-            {
-                "status": "complete",
-                "blocks": blocks,
-                "alpha_grid": [1.1, 1.25, 1.5, 1.75, 2.0],
-            },
-            indent=2,
-        ),
-        encoding="utf-8",
+    subprocess.run(
+        [str(ROOT / ".venv/bin/python"), "scripts/verify_alpha_scan.py", "--scope", "pilot"],
+        cwd=ROOT,
+        check=True,
     )
 
 

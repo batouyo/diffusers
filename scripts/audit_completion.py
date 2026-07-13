@@ -14,6 +14,7 @@ from evaluators import evaluation_hash
 from verify_pilot_complete import sentinel_current
 from verify_pilot_followup import sentinel_current as followup_sentinel_current
 from verify_formal_complete import sentinel_current as formal_sentinel_current
+from verify_alpha_scan import sentinel_current as alpha_sentinel_current
 
 
 ROOT = Path("/home/hyp/Code/flux-kontext-block-probing")
@@ -79,6 +80,7 @@ def main() -> None:
         "scripts/verify_pilot_complete.py",
         "scripts/verify_pilot_followup.py",
         "scripts/verify_formal_complete.py",
+        "scripts/verify_alpha_scan.py",
     ]
     required_outputs = ["raw_metrics.csv", "block_summary.csv", "stream_summary.csv", "selected_blocks.json"]
     required_block_columns = {
@@ -161,6 +163,8 @@ def main() -> None:
         and all(count == joint.get("expected_per_arm") for count in joint["arm_counts"].values())
     )
     joint_or_no_go = valid_joint or validated_no_go
+    pilot_alpha_verified = alpha_sentinel_current(ROOT, "pilot")
+    formal_alpha_verified = validated_no_go or alpha_sentinel_current(ROOT, "formal")
     checks = [
         check(
             "independent required source files and commit-bound tests",
@@ -234,6 +238,15 @@ def main() -> None:
                 "files": required_outputs,
                 "required_block_columns": sorted(required_block_columns),
                 "observed_block_columns": sorted(block_columns),
+            },
+        ),
+        check(
+            "exact five-value alpha grids",
+            pilot_alpha_verified and formal_alpha_verified,
+            {
+                "pilot_alpha_sentinel_current": pilot_alpha_verified,
+                "formal_alpha_sentinel_current_or_validated_no_go": formal_alpha_verified,
+                "validated_no_go": validated_no_go,
             },
         ),
         check(

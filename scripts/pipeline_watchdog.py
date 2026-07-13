@@ -16,6 +16,7 @@ from pathlib import Path
 from expected_counts import load_counts
 from verify_pilot_complete import sentinel_current
 from verify_pilot_followup import sentinel_current as followup_sentinel_current
+from verify_alpha_scan import sentinel_current as alpha_sentinel_current
 
 
 ROOT = Path("/home/hyp/Code/flux-kontext-block-probing")
@@ -102,7 +103,7 @@ def main() -> None:
         report = session_exists("flux_probe_report")
         formal = session_exists("flux_probe_formal")
         stage3_ready = (RUN_ROOT / "stage3_blocks.json").exists()
-        alpha_ready = json_flag(RUN_ROOT / "pilot_alpha_complete.json", "status")
+        alpha_ready = alpha_sentinel_current(ROOT, "pilot")
         calibration_ready = (RUN_ROOT / "calibration" / "blinded_labels.csv").exists()
         calibration_gate = json_flag(
             RUN_ROOT / "calibration" / "calibration_report.json", "gate_pass"
