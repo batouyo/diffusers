@@ -249,6 +249,10 @@ def main() -> None:
     parser.add_argument("--run-id")
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--max-items", type=int)
+    parser.add_argument(
+        "--metadata-list",
+        help="UTF-8 file containing one metadata JSON path per line; order is preserved",
+    )
     parser.add_argument("--skip-vlm", action="store_true")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -256,15 +260,32 @@ def main() -> None:
     run_id = args.run_id or config["project"]["run_id"]
     run_root = Path(config["project"]["output_root"]) / run_id
     dataset = load_dataset(config["project"]["dataset_manifest"])
+    metadata = list(iter_metadata(run_root))
+    if args.metadata_list:
+        run_root_resolved = run_root.resolve()
+        requested = [
+            Path(line.strip()).resolve()
+            for line in Path(args.metadata_list).read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        if len(requested) != len(set(requested)):
+            raise ValueError("metadata list contains duplicate paths")
+        if any(not path.is_relative_to(run_root_resolved) for path in requested):
+            raise ValueError("every requested metadata path must be inside the selected run root")
+        available = {path.resolve(): (path, value) for path, value in metadata}
+        missing = [str(path) for path in requested if path not in available]
+        if missing:
+            raise FileNotFoundError(f"metadata list contains {len(missing)} unavailable items: {missing[:3]}")
+        metadata = [available[path] for path in requested]
+    if args.max_items is not None:
+        metadata = metadata[: args.max_items]
+    LOGGER.info("selected %d metadata items for evaluation", len(metadata))
     judge = None if args.skip_vlm else QwenEditJudge(
         config["evaluation"]["qwen_model"], args.device, config["evaluation"]["vlm_max_new_tokens"]
     )
     dino = DinoPreservation(config["evaluation"]["dino_model"], args.device)
     lpips_metric = LpipsDistance(args.device)
     evaluator_hash = evaluation_hash(config)
-    metadata = list(iter_metadata(run_root))
-    if args.max_items is not None:
-        metadata = metadata[: args.max_items]
     for index, (meta_path, meta) in enumerate(metadata, 1):
         eval_path = meta_path.with_suffix(".eval.json")
         if eval_path.exists():

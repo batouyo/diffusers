@@ -8,6 +8,17 @@ export CUDA_VISIBLE_DEVICES=GPU-2cd22c91-025f-16c6-f54a-0947f721d15e
   --config probe_config.yaml --device cuda:0 run \
   --stage pilot --split discovery >> logs/pilot_gpu2.log 2>&1
 
+.venv/bin/python scripts/make_calibration_manifest.py \
+  > logs/calibration_manifest.log 2>&1
+
+.venv/bin/python evaluators.py \
+  --config probe_config.yaml --device cuda:0 \
+  --metadata-list /data15/hyp/project_storage/flux-kontext-block-probing/main_512/calibration/metadata_manifest.txt \
+  > logs/calibration_priority_eval.log 2>&1
+
+.venv/bin/python scripts/make_calibration_bundle.py \
+  > logs/calibration_bundle.log 2>&1
+
 .venv/bin/python evaluators.py \
   --config probe_config.yaml --device cuda:0 > logs/pilot_eval.log 2>&1
 
