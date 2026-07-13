@@ -321,6 +321,23 @@ def select_candidates(summary: pd.DataFrame, frame: pd.DataFrame, config: dict) 
         int(value)
         for value in summary.loc[summary["semantic_drop"].notna(), "global_block_index"].tolist()
     )
+    category_tests = []
+    for (global_index, category), group in enhance.groupby(["global_block_index", "category"]):
+        category_tests.append(
+            {
+                "global_block_index": int(global_index),
+                "category": category,
+                "p": one_sided_paired_p(group, "semantic_gain"),
+            }
+        )
+    category_test_frame = pd.DataFrame(category_tests)
+    category_q_lookup = {}
+    if not category_test_frame.empty:
+        for category, indices in category_test_frame.groupby("category").groups.items():
+            adjusted = benjamini_hochberg(category_test_frame.loc[indices, "p"])
+            for row_index, q_value in adjusted.items():
+                row = category_test_frame.loc[row_index]
+                category_q_lookup[(int(row["global_block_index"]), category)] = float(q_value)
     for (global_index, category), group in enhance.groupby(["global_block_index", "category"]):
         if int(global_index) not in verified_blocks:
             continue
@@ -331,15 +348,16 @@ def select_candidates(summary: pd.DataFrame, frame: pd.DataFrame, config: dict) 
         low, _ = stratified_bootstrap(group, "semantic_gain", stats["bootstrap_samples"], stats["random_seed"] + int(global_index))
         block_row = summary.loc[summary["global_block_index"] == global_index].iloc[0]
         per_seed = group.groupby("seed")["semantic_gain"].mean().dropna()
+        category_q = category_q_lookup.get((int(global_index), category), float("nan"))
         safe = (
             block_row["semantic_drop_ci_low"] > 0
-            and block_row["semantic_gain_q_bh"] <= stats["bh_q"]
             and block_row["semantic_drop_q_bh"] <= stats["bh_q"]
             and block_row["preservation_cost_ci_high"] <= preserve_limit
             and block_row["bad_image_rate"] <= stats["bad_image_rate_max"]
         )
         if (
             safe
+            and category_q <= stats["bh_q"]
             and mean >= stats["category_gain_min"]
             and low > 0
             and float((per_sample > 0).mean()) >= stats["category_positive_sample_rate"]
@@ -347,7 +365,12 @@ def select_candidates(summary: pd.DataFrame, frame: pd.DataFrame, config: dict) 
             and bool((per_seed > 0).all())
         ):
             current = category_specific.get(category)
-            candidate = {"global_block_index": int(global_index), "gain": mean, "ci_low": low}
+            candidate = {
+                "global_block_index": int(global_index),
+                "gain": mean,
+                "ci_low": low,
+                "category_gain_q_bh": category_q,
+            }
             if current is None or candidate["ci_low"] > current["ci_low"]:
                 category_specific[category] = candidate
     selected = list(universal)

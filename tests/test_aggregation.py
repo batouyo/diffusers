@@ -114,6 +114,7 @@ def test_candidate_selection_enforces_preservation_and_correlated_adjacency_dedu
     assert selected["selected_global_blocks"] == [0]
     assert 4 not in selected["selected_global_blocks"]
     assert selected["preservation_cost_limit"] == 0.02
+    assert selected["category_specific_blocks"]["color"]["category_gain_q_bh"] <= 0.05
 
 
 def test_benjamini_hochberg_is_monotone_and_preserves_missing() -> None:
