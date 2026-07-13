@@ -119,6 +119,19 @@ def main() -> None:
         and no_go.get("selected_global_blocks") == []
     )
     required_plots = core_plots + ([] if validated_no_go else ["candidate_vs_random_and_all.png"])
+    grid_manifest_path = run_root / "plots" / "image_grids" / "image_grid_manifest.json"
+    grid_manifest = json.loads(grid_manifest_path.read_text(encoding="utf-8")) if grid_manifest_path.exists() else {}
+    valid_grids = validated_no_go or (
+        grid_manifest.get("status") == "complete"
+        and set(grid_manifest.get("categories", [])) == set(config["dataset"]["categories"])
+        and len(grid_manifest.get("grids", [])) == len(config["dataset"]["categories"])
+        and all(
+            Path(item.get("grid_path", "")).exists()
+            and set(item.get("panels", {})) == {"source", "baseline", "candidate", "disable", "random", "all_blocks"}
+            and all(Path(panel.get("path", "")).exists() and panel.get("sha256") for panel in item.get("panels", {}).values())
+            for item in grid_manifest.get("grids", [])
+        )
+    )
     joint_path = run_root / "joint_validation.json"
     joint = json.loads(joint_path.read_text(encoding="utf-8")) if joint_path.exists() else {}
     valid_joint = (
@@ -198,8 +211,13 @@ def main() -> None:
         ),
         check(
             "required plots (candidate comparison conditional on non-empty selection)",
-            all((run_root / "plots" / path).exists() for path in required_plots),
-            {"required": required_plots, "validated_no_go": validated_no_go},
+            all((run_root / "plots" / path).exists() for path in required_plots) and valid_grids,
+            {
+                "required": required_plots,
+                "validated_no_go": validated_no_go,
+                "image_grid_manifest": grid_manifest_path,
+                "valid_image_grids": valid_grids,
+            },
         ),
         check("80-example calibration bundle", (run_root / "calibration" / "blinded_labels.csv").exists(), run_root / "calibration"),
         check(

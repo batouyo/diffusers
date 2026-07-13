@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from collections import defaultdict
 from pathlib import Path
@@ -33,14 +34,11 @@ def load_metadata(root: Path) -> list[dict]:
 
 def panel(path: str | None, label: str, size: int = 384) -> Image.Image:
     canvas = Image.new("RGB", (size, size + 42), "white")
-    if path and Path(path).exists():
-        with Image.open(path) as image:
-            image = ImageOps.fit(ImageOps.exif_transpose(image).convert("RGB"), (size, size), Image.Resampling.LANCZOS)
-            canvas.paste(image, (0, 0))
-    else:
-        draw = ImageDraw.Draw(canvas)
-        draw.rectangle((0, 0, size - 1, size - 1), outline="gray")
-        draw.text((size // 2 - 35, size // 2), "missing", fill="gray")
+    if not path or not Path(path).exists():
+        raise FileNotFoundError(f"required grid panel is missing: {label} -> {path}")
+    with Image.open(path) as image:
+        image = ImageOps.fit(ImageOps.exif_transpose(image).convert("RGB"), (size, size), Image.Resampling.LANCZOS)
+        canvas.paste(image, (0, 0))
     draw = ImageDraw.Draw(canvas)
     draw.text((8, size + 12), label, fill="black")
     return canvas
@@ -81,32 +79,69 @@ def main() -> None:
     config = yaml.safe_load(Path(args.config).read_text(encoding="utf-8"))
     run_root = Path(config["project"]["output_root"]) / config["project"]["run_id"]
     selection = json.loads((run_root / "selected_blocks.json").read_text(encoding="utf-8"))
-    candidates = selection.get("selected_global_blocks") or selection.get("stage2_blocks") or []
+    candidates = selection.get("selected_global_blocks") or []
     if not candidates:
-        raise RuntimeError("no candidate or stage ranking available for grids")
+        raise RuntimeError("no independently selected candidate is available for held-out grids")
     candidate = int(candidates[0])
     dataset = [json.loads(line) for line in Path(config["project"]["dataset_manifest"]).read_text(encoding="utf-8").splitlines()]
     records = load_metadata(run_root)
     grids = run_root / "plots" / "image_grids"
     grids.mkdir(parents=True, exist_ok=True)
+    manifest_rows = []
     for category in config["dataset"]["categories"]:
         row = sorted(
             (item for item in dataset if item["split"] == args.split and item["category"] == category),
             key=lambda item: item["id"],
         )[0]
         sample_id = row["id"]
+        paths = {
+            "source": row["image"],
+            "baseline": find_arm(records, sample_id, "baseline", candidate),
+            "candidate": find_arm(records, sample_id, "candidate", candidate),
+            "disable": find_arm(records, sample_id, "disable", candidate),
+            "random": find_arm(records, sample_id, "random", candidate),
+            "all_blocks": find_arm(records, sample_id, "all", candidate),
+        }
         items = [
-            panel(row["image"], "source"),
-            panel(find_arm(records, sample_id, "baseline", candidate), "baseline"),
-            panel(find_arm(records, sample_id, "candidate", candidate), f"candidate g{candidate}"),
-            panel(find_arm(records, sample_id, "disable", candidate), f"disable g{candidate}"),
-            panel(find_arm(records, sample_id, "random", candidate), "random matched"),
-            panel(find_arm(records, sample_id, "all", candidate), "all blocks"),
+            panel(paths["source"], "source"),
+            panel(paths["baseline"], "baseline"),
+            panel(paths["candidate"], f"candidate g{candidate}"),
+            panel(paths["disable"], f"disable g{candidate}"),
+            panel(paths["random"], "random matched"),
+            panel(paths["all_blocks"], "all blocks"),
         ]
         grid = Image.new("RGB", (3 * items[0].width, 2 * items[0].height), "white")
         for index, item in enumerate(items):
             grid.paste(item, ((index % 3) * item.width, (index // 3) * item.height))
-        grid.save(grids / f"{category}_{sample_id}.png")
+        grid_path = grids / f"{category}_{sample_id}.png"
+        grid.save(grid_path)
+        manifest_rows.append(
+            {
+                "category": category,
+                "sample_id": sample_id,
+                "candidate_global_block": candidate,
+                "panels": {
+                    name: {
+                        "path": str(path),
+                        "sha256": hashlib.sha256(Path(path).read_bytes()).hexdigest(),
+                    }
+                    for name, path in paths.items()
+                },
+                "grid_path": str(grid_path),
+                "grid_sha256": hashlib.sha256(grid_path.read_bytes()).hexdigest(),
+            }
+        )
+    if len(manifest_rows) != len(config["dataset"]["categories"]):
+        raise RuntimeError("one held-out grid per edit category is required")
+    manifest = {
+        "status": "complete",
+        "candidate_global_block": candidate,
+        "categories": list(config["dataset"]["categories"]),
+        "grids": manifest_rows,
+    }
+    temporary = (grids / "image_grid_manifest.json").with_suffix(".json.tmp")
+    temporary.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    temporary.replace(grids / "image_grid_manifest.json")
     print(grids)
 
 
