@@ -131,6 +131,12 @@ def main() -> None:
     required_plots = core_plots + ([] if validated_no_go else ["candidate_vs_random_and_all.png"])
     grid_manifest_path = run_root / "plots" / "image_grids" / "image_grid_manifest.json"
     grid_manifest = json.loads(grid_manifest_path.read_text(encoding="utf-8")) if grid_manifest_path.exists() else {}
+    calibration_manifest_path = run_root / "calibration" / "bundle_manifest.json"
+    calibration_manifest = (
+        json.loads(calibration_manifest_path.read_text(encoding="utf-8"))
+        if calibration_manifest_path.exists()
+        else {}
+    )
     valid_grids = validated_no_go or (
         grid_manifest.get("status") == "complete"
         and set(grid_manifest.get("categories", [])) == set(config["dataset"]["categories"])
@@ -249,9 +255,13 @@ def main() -> None:
                     "index.html",
                     "RATING_INSTRUCTIONS.txt",
                     "blinded_calibration_bundle.zip",
+                    "bundle_manifest.json",
                 ]
-            ),
-            run_root / "calibration",
+            )
+            and calibration_manifest.get("status") == "complete"
+            and calibration_manifest.get("examples") == 80
+            and calibration_manifest.get("subset_counts") == {"prompt_calibration": 40, "locked_validation": 40},
+            calibration_manifest_path,
         ),
         check(
             "human calibration gate",

@@ -8,17 +8,37 @@ import html
 import json
 import shutil
 import zipfile
-from collections import defaultdict
+from collections import Counter
 from pathlib import Path
 
 import yaml
 
+from evaluators import evaluation_hash, reusable_evaluation
+from probe_flux_kontext_blocks import experiment_hash, file_sha256
+
 
 ROOT = Path("/home/hyp/Code/flux-kontext-block-probing")
+PROTOCOL_VERSION = 2
+IMMUTABLE_LABEL_FIELDS = [
+    "calibration_id",
+    "subset",
+    "category",
+    "instruction",
+    "target_description",
+    "source_image",
+    "output_image",
+]
 
 
 def stable_key(value: str) -> str:
     return hashlib.sha256(f"20260714:{value}".encode()).hexdigest()
+
+
+def row_identity_hash(row: dict) -> str:
+    payload = {field: str(row.get(field, "")) for field in IMMUTABLE_LABEL_FIELDS}
+    return hashlib.sha256(
+        json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
 
 
 def main() -> None:
@@ -28,69 +48,81 @@ def main() -> None:
         for row in (json.loads(line) for line in Path(config["project"]["dataset_manifest"]).read_text(encoding="utf-8").splitlines())
     }
     run_root = Path(config["project"]["output_root"]) / config["project"]["run_id"]
-    grouped = defaultdict(list)
-    for meta_path in (run_root / "images").rglob("*.json"):
-        if meta_path.name.endswith(".eval.json"):
-            continue
+    calibration_root = run_root / "calibration"
+    manifest_path = calibration_root / "metadata_manifest.txt"
+    selection_key_path = calibration_root / "metadata_selection_key.json"
+    manifest_paths = [
+        Path(line).resolve() for line in manifest_path.read_text(encoding="utf-8").splitlines() if line.strip()
+    ]
+    if len(manifest_paths) != 80 or len(set(manifest_paths)) != 80:
+        raise RuntimeError("calibration metadata manifest must contain exactly 80 unique paths")
+    run_root_resolved = run_root.resolve()
+    if any(not path.is_relative_to(run_root_resolved / "images") for path in manifest_paths):
+        raise RuntimeError("calibration metadata path escapes the run images directory")
+    selection_key = json.loads(selection_key_path.read_text(encoding="utf-8"))
+    generation_hash = experiment_hash(config)
+    evaluator_hash = evaluation_hash(config)
+    selected = []
+    for meta_path in manifest_paths:
         meta = json.loads(meta_path.read_text(encoding="utf-8"))
-        if meta.get("status") != "complete" or meta.get("split") != "discovery":
-            continue
+        locked = selection_key.get(str(meta_path))
+        if locked is None:
+            raise RuntimeError(f"calibration selection key missing path: {meta_path}")
+        if (
+            meta.get("status") != "complete"
+            or meta.get("split") != "discovery"
+            or meta.get("config_hash") != generation_hash
+            or any(meta.get(field) != locked.get(field) for field in ["category", "sample_id", "mode", "global_block_index", "output_sha256"])
+        ):
+            raise RuntimeError(f"calibration metadata differs from its locked selection: {meta_path}")
         eval_path = meta_path.with_suffix(".eval.json")
         if not eval_path.exists():
-            continue
+            raise RuntimeError(f"calibration evaluation missing: {eval_path}")
         evaluation = json.loads(eval_path.read_text(encoding="utf-8"))
-        if not evaluation.get("vlm_parse_ok"):
-            continue
-        grouped[meta["category"]].append((meta, evaluation))
+        if not reusable_evaluation(evaluation, meta, evaluator_hash, require_vlm=True):
+            raise RuntimeError(f"calibration evaluation is stale or incomplete: {eval_path}")
+        if file_sha256(meta["output_path"]) != meta["output_sha256"]:
+            raise RuntimeError(f"calibration output checksum mismatch: {meta['output_path']}")
+        selected.append((meta, evaluation, locked["subset"]))
 
-    output = run_root / "calibration"
+    output = calibration_root
     images = output / "images"
     images.mkdir(parents=True, exist_ok=True)
-    selected = []
-    for category in config["dataset"]["categories"]:
-        items = grouped[category]
-        baselines = sorted((item for item in items if item[0]["mode"] == "baseline"), key=lambda item: stable_key(item[0]["sample_id"]))
-        enhanced = sorted(
-            (item for item in items if item[0]["mode"] == "enhance_text"),
-            key=lambda item: stable_key(f"{item[0]['sample_id']}:{item[0]['global_block_index']}"),
-        )
-        category_items = baselines[:2]
-        used_samples = {item[0]["sample_id"] for item in category_items}
-        for item in enhanced:
-            if item[0]["sample_id"] in used_samples and len(used_samples) < 5:
-                continue
-            category_items.append(item)
-            used_samples.add(item[0]["sample_id"])
-            if len(category_items) == 10:
-                break
-        if len(category_items) != 10:
-            raise RuntimeError(f"{category}: expected 10 calibration items, got {len(category_items)}")
-        selected.extend(category_items)
+    subset_counts = Counter(subset for _, _, subset in selected)
+    category_subset_counts = Counter((meta["category"], subset) for meta, _, subset in selected)
+    if subset_counts != {"prompt_calibration": 40, "locked_validation": 40}:
+        raise RuntimeError(f"calibration subset imbalance: {dict(subset_counts)}")
+    if any(category_subset_counts[(category, subset)] != 5 for category in config["dataset"]["categories"] for subset in subset_counts):
+        raise RuntimeError(f"calibration category/subset imbalance: {dict(category_subset_counts)}")
 
     blinded_rows = []
     key_rows = {}
     html_cards = []
-    for index, (meta, evaluation) in enumerate(selected):
+    bundle_rows = {}
+    for index, (meta, evaluation, subset) in enumerate(selected):
         calibration_id = f"cal_{index:03d}"
         row = dataset[meta["sample_id"]]
         source_name = f"{calibration_id}_source.png"
         output_name = f"{calibration_id}_output.png"
         shutil.copy2(row["image"], images / source_name)
         shutil.copy2(meta["output_path"], images / output_name)
-        subset = "prompt_calibration" if index % 10 < 5 else "locked_validation"
-        blinded_rows.append(
-            {
-                "calibration_id": calibration_id,
-                "subset": subset,
-                "category": meta["category"],
-                "instruction": row["instruction"],
-                "target_description": row["target_description"],
-                "source_image": f"images/{source_name}",
-                "output_image": f"images/{output_name}",
-                "human_score_0_to_4": "",
-                "human_evidence": "",
-            }
-        )
+        blind_row = {
+            "calibration_id": calibration_id,
+            "subset": subset,
+            "category": meta["category"],
+            "instruction": row["instruction"],
+            "target_description": row["target_description"],
+            "source_image": f"images/{source_name}",
+            "output_image": f"images/{output_name}",
+            "human_score_0_to_4": "",
+            "human_evidence": "",
+        }
+        blinded_rows.append(blind_row)
+        bundle_rows[calibration_id] = {
+            "immutable_row_sha256": row_identity_hash(blind_row),
+            "source_sha256": file_sha256(row["image"]),
+            "output_sha256": meta["output_sha256"],
+        }
         key_rows[calibration_id] = {
             "sample_id": meta["sample_id"],
             "mode": meta["mode"],
@@ -208,6 +240,25 @@ update();
             handle.write(output / name, arcname=name)
         for image_path in sorted(images.glob("*.png")):
             handle.write(image_path, arcname=f"images/{image_path.name}")
+    bundle_manifest = {
+        "status": "complete",
+        "protocol_version": PROTOCOL_VERSION,
+        "examples": len(blinded_rows),
+        "subset_counts": dict(subset_counts),
+        "category_subset_counts": {
+            f"{category}:{subset}": count
+            for (category, subset), count in sorted(category_subset_counts.items())
+        },
+        "generation_hash": generation_hash,
+        "evaluation_hash": evaluator_hash,
+        "metadata_manifest_sha256": file_sha256(manifest_path),
+        "selection_key_sha256": file_sha256(selection_key_path),
+        "archive_sha256": file_sha256(archive),
+        "rows": bundle_rows,
+    }
+    (output / "bundle_manifest.json").write_text(
+        json.dumps(bundle_manifest, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     print(
         json.dumps(
             {"examples": len(blinded_rows), "output": str(output), "blind_archive": str(archive)},
