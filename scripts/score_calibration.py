@@ -10,12 +10,14 @@ from pathlib import Path
 import pandas as pd
 from scipy.stats import spearmanr
 
-from make_calibration_bundle import PROTOCOL_VERSION, row_identity_hash
+from make_calibration_bundle import PROTOCOL_VERSION, bundle_current, row_identity_hash
 from probe_flux_kontext_blocks import file_sha256
 
 
 def main() -> None:
     root = Path("/data15/hyp/project_storage/flux-kontext-block-probing/main_512/calibration")
+    if not bundle_current():
+        raise RuntimeError("calibration bundle is stale, incomplete, or checksum-invalid")
     labels = pd.read_csv(root / "blinded_labels.csv")
     bundle = json.loads((root / "bundle_manifest.json").read_text(encoding="utf-8"))
     expected_ids = {f"cal_{index:03d}" for index in range(80)}
