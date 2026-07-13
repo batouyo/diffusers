@@ -40,6 +40,7 @@ class JointJob:
     split: str
     seed: int
     arm: str
+    intervention_mode: str
     block_indices: tuple[int, ...]
     alpha: float
     resolution: int
@@ -73,16 +74,17 @@ def random_controls(
 def arms(transformer, candidates: list[int], alpha: float, random_sets: int, seed: int):
     n_double = len(transformer.transformer_blocks)
     total = n_double + len(transformer.single_transformer_blocks)
-    result = [("baseline", tuple(), 1.0)]
-    result.extend((f"candidate_single_g{index:03d}", (index,), alpha) for index in candidates)
-    result.append(("candidate_combo", tuple(sorted(candidates)), alpha))
+    result = [("baseline", "none", tuple(), 1.0)]
+    result.extend((f"candidate_single_g{index:03d}", "enhance_text", (index,), alpha) for index in candidates)
+    result.append((f"candidate_disable_g{candidates[0]:03d}", "disable_text", (candidates[0],), 0.0))
+    result.append(("candidate_combo", "enhance_text", tuple(sorted(candidates)), alpha))
     for index, blocks in enumerate(random_controls(total, n_double, candidates, random_sets, seed)):
-        result.append((f"random_{index:02d}", blocks, alpha))
-    result.append(("all_blocks", tuple(range(total)), alpha))
+        result.append((f"random_{index:02d}", "enhance_text", blocks, alpha))
+    result.append(("all_blocks", "enhance_text", tuple(range(total)), alpha))
     budget_alpha = 1.0 + len(candidates) / total * (alpha - 1.0)
-    result.append(("all_blocks_budget_matched", tuple(range(total)), budget_alpha))
+    result.append(("all_blocks_budget_matched", "enhance_text", tuple(range(total)), budget_alpha))
     textailor = tuple(index for index in [2, 7, 12, 17, 22] if index < total)
-    result.append(("textailor_flux1dev_control", textailor, alpha))
+    result.append(("textailor_flux1dev_control", "enhance_text", textailor, alpha))
     return result
 
 
@@ -131,7 +133,7 @@ def run(args) -> None:
     resolution = args.resolution or config["inference"]["resolution"]
     for row in sorted(rows, key=lambda value: value["id"]):
         for seed in config["inference"]["seeds"]:
-            for arm, blocks, arm_alpha in arm_list:
+            for arm, intervention_mode, blocks, arm_alpha in arm_list:
                 jobs.append(
                     JointJob(
                         sample_id=row["id"],
@@ -142,6 +144,7 @@ def run(args) -> None:
                         split=row["split"],
                         seed=int(seed),
                         arm=arm,
+                        intervention_mode=intervention_mode,
                         block_indices=blocks,
                         alpha=float(arm_alpha),
                         resolution=int(resolution),
@@ -173,7 +176,7 @@ def run(args) -> None:
                             TextBlockIntervention(
                                 pipe.transformer,
                                 global_index,
-                                "enhance_text",
+                                job.intervention_mode,
                                 alpha=job.alpha,
                                 allow_multi=True,
                             )

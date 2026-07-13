@@ -1,0 +1,114 @@
+"""Render pre-registered source/baseline/candidate/disable/random/all image grids."""
+
+from __future__ import annotations
+
+import argparse
+import json
+from collections import defaultdict
+from pathlib import Path
+
+from PIL import Image, ImageDraw, ImageFont, ImageOps
+import yaml
+
+
+ROOT = Path("/home/hyp/Code/flux-kontext-block-probing")
+
+
+def load_metadata(root: Path) -> list[dict]:
+    result = []
+    for folder in [root / "images", root / "joint"]:
+        if not folder.exists():
+            continue
+        for path in folder.rglob("*.json"):
+            if path.name.endswith(".eval.json"):
+                continue
+            try:
+                value = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if value.get("status") == "complete" and value.get("output_path"):
+                result.append(value)
+    return result
+
+
+def panel(path: str | None, label: str, size: int = 384) -> Image.Image:
+    canvas = Image.new("RGB", (size, size + 42), "white")
+    if path and Path(path).exists():
+        with Image.open(path) as image:
+            image = ImageOps.fit(ImageOps.exif_transpose(image).convert("RGB"), (size, size), Image.Resampling.LANCZOS)
+            canvas.paste(image, (0, 0))
+    else:
+        draw = ImageDraw.Draw(canvas)
+        draw.rectangle((0, 0, size - 1, size - 1), outline="gray")
+        draw.text((size // 2 - 35, size // 2), "missing", fill="gray")
+    draw = ImageDraw.Draw(canvas)
+    draw.text((8, size + 12), label, fill="black")
+    return canvas
+
+
+def find_arm(records: list[dict], sample_id: str, arm: str, candidate: int) -> str | None:
+    candidates = [row for row in records if row.get("sample_id") == sample_id and row.get("seed") == 42]
+    if arm == "baseline":
+        rows = [row for row in candidates if row.get("arm") == "baseline" or row.get("mode") == "baseline"]
+    elif arm == "candidate":
+        rows = [
+            row
+            for row in candidates
+            if row.get("arm") == f"candidate_single_g{candidate:03d}"
+            or (row.get("mode") == "enhance_text" and row.get("global_block_index") == candidate)
+        ]
+    elif arm == "disable":
+        rows = [
+            row
+            for row in candidates
+            if row.get("arm") == f"candidate_disable_g{candidate:03d}"
+            or (row.get("mode") == "disable_text" and row.get("global_block_index") == candidate)
+        ]
+    elif arm == "random":
+        rows = [row for row in candidates if row.get("arm") == "random_00"]
+    elif arm == "all":
+        rows = [row for row in candidates if row.get("arm") == "all_blocks"]
+    else:
+        rows = []
+    return rows[0]["output_path"] if rows else None
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config", default=str(ROOT / "probe_config.yaml"))
+    parser.add_argument("--split", default="heldout")
+    args = parser.parse_args()
+    config = yaml.safe_load(Path(args.config).read_text(encoding="utf-8"))
+    run_root = Path(config["project"]["output_root"]) / config["project"]["run_id"]
+    selection = json.loads((run_root / "selected_blocks.json").read_text(encoding="utf-8"))
+    candidates = selection.get("selected_global_blocks") or selection.get("stage2_blocks") or []
+    if not candidates:
+        raise RuntimeError("no candidate or stage ranking available for grids")
+    candidate = int(candidates[0])
+    dataset = [json.loads(line) for line in Path(config["project"]["dataset_manifest"]).read_text(encoding="utf-8").splitlines()]
+    records = load_metadata(run_root)
+    grids = run_root / "plots" / "image_grids"
+    grids.mkdir(parents=True, exist_ok=True)
+    for category in config["dataset"]["categories"]:
+        row = sorted(
+            (item for item in dataset if item["split"] == args.split and item["category"] == category),
+            key=lambda item: item["id"],
+        )[0]
+        sample_id = row["id"]
+        items = [
+            panel(row["image"], "source"),
+            panel(find_arm(records, sample_id, "baseline", candidate), "baseline"),
+            panel(find_arm(records, sample_id, "candidate", candidate), f"candidate g{candidate}"),
+            panel(find_arm(records, sample_id, "disable", candidate), f"disable g{candidate}"),
+            panel(find_arm(records, sample_id, "random", candidate), "random matched"),
+            panel(find_arm(records, sample_id, "all", candidate), "all blocks"),
+        ]
+        grid = Image.new("RGB", (3 * items[0].width, 2 * items[0].height), "white")
+        for index, item in enumerate(items):
+            grid.paste(item, ((index % 3) * item.width, (index // 3) * item.height))
+        grid.save(grids / f"{category}_{sample_id}.png")
+    print(grids)
+
+
+if __name__ == "__main__":
+    main()
