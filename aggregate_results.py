@@ -34,6 +34,7 @@ def read_records(run_root: Path) -> pd.DataFrame:
                 **meta,
                 "s_edit": evaluation.get("s_edit"),
                 "s_preserve": evaluation.get("dino_similarity"),
+                "lpips_distance": evaluation.get("lpips_distance"),
                 "vlm_parse_ok": evaluation.get("vlm_parse_ok"),
                 "bad_image": bool(
                     (not quality.get("finite", True))
@@ -50,8 +51,14 @@ def paired_metrics(frame: pd.DataFrame) -> pd.DataFrame:
     if frame.empty or frame["s_edit"].isna().all():
         return frame
     keys = ["sample_id", "seed", "resolution"]
-    base = frame[frame["mode"] == "baseline"][keys + ["s_edit", "s_preserve"]].drop_duplicates(keys)
-    base = base.rename(columns={"s_edit": "s_edit_base", "s_preserve": "s_preserve_base"})
+    base = frame[frame["mode"] == "baseline"][keys + ["s_edit", "s_preserve", "lpips_distance"]].drop_duplicates(keys)
+    base = base.rename(
+        columns={
+            "s_edit": "s_edit_base",
+            "s_preserve": "s_preserve_base",
+            "lpips_distance": "lpips_distance_base",
+        }
+    )
     merged = frame.merge(base, on=keys, how="left")
     merged["semantic_gain"] = np.where(
         merged["mode"] == "enhance_text", merged["s_edit"] - merged["s_edit_base"], np.nan
@@ -61,6 +68,9 @@ def paired_metrics(frame: pd.DataFrame) -> pd.DataFrame:
     )
     merged["preservation_cost"] = np.where(
         merged["mode"] == "enhance_text", merged["s_preserve_base"] - merged["s_preserve"], np.nan
+    )
+    merged["lpips_cost"] = np.where(
+        merged["mode"] == "enhance_text", merged["lpips_distance"] - merged["lpips_distance_base"], np.nan
     )
     return merged
 
@@ -138,7 +148,33 @@ def summarize_blocks(frame: pd.DataFrame, config: dict) -> pd.DataFrame:
 def select_candidates(summary: pd.DataFrame, frame: pd.DataFrame, config: dict) -> dict:
     stats = config["statistics"]
     if summary.empty:
-        return {"status": "insufficient_data", "universal_blocks": [], "category_specific_blocks": []}
+        return {
+            "status": "insufficient_data",
+            "stage2_blocks": [],
+            "universal_blocks": [],
+            "category_specific_blocks": [],
+        }
+    ranked = summary.sort_values(["semantic_gain_ci_low", "semantic_gain"], ascending=False)
+    stage2 = [int(value) for value in ranked.head(10)["global_block_index"]]
+    category_matrix = {}
+    for _, row in summary.iterrows():
+        try:
+            category_matrix[int(row["global_block_index"])] = json.loads(row["category_gain_json"])
+        except Exception:
+            category_matrix[int(row["global_block_index"])] = {}
+    categories = config["dataset"]["categories"]
+    for category in categories:
+        candidates = sorted(
+            category_matrix,
+            key=lambda index: category_matrix[index].get(category, float("-inf")),
+            reverse=True,
+        )
+        for candidate in candidates:
+            if candidate not in stage2:
+                stage2.append(candidate)
+                break
+        if len(stage2) >= config["probing"]["stage2_blocks"]:
+            break
     eligible = summary[
         (summary["semantic_gain"] >= stats["universal_gain_min"])
         & (summary["semantic_gain_ci_low"] > 0)
@@ -175,8 +211,10 @@ def select_candidates(summary: pd.DataFrame, frame: pd.DataFrame, config: dict) 
     selected = sorted(set(universal) | {item["global_block_index"] for item in category_specific.values()})
     if len(selected) > config["probing"]["max_candidates"]:
         selected = selected[: config["probing"]["max_candidates"]]
+    has_disable = summary["semantic_drop"].notna().any()
     return {
-        "status": "selected" if selected else "no_go",
+        "status": ("selected" if selected else "no_go") if has_disable else "awaiting_disable_text",
+        "stage2_blocks": stage2[: config["probing"]["stage2_blocks"]],
         "universal_blocks": universal,
         "category_specific_blocks": category_specific,
         "selected_global_blocks": selected,
@@ -185,7 +223,7 @@ def select_candidates(summary: pd.DataFrame, frame: pd.DataFrame, config: dict) 
     }
 
 
-def plot_curves(summary: pd.DataFrame, output: Path) -> None:
+def plot_curves(summary: pd.DataFrame, frame: pd.DataFrame, output: Path) -> None:
     output.mkdir(parents=True, exist_ok=True)
     if summary.empty:
         return
@@ -197,12 +235,38 @@ def plot_curves(summary: pd.DataFrame, output: Path) -> None:
     ]:
         plt.figure(figsize=(12, 4))
         sns.lineplot(data=summary, x="global_block_index", y=column, marker="o")
-        plt.axvline(18.5, color="black", linestyle="--", label="double/single boundary")
+        double_rows = summary[summary["block_type"] == "double"]
+        boundary = float(double_rows["global_block_index"].max()) + 0.5 if not double_rows.empty else 18.5
+        plt.axvline(boundary, color="black", linestyle="--", label="double/single boundary")
         plt.axhline(0, color="gray", linewidth=1)
         plt.legend()
         plt.tight_layout()
         plt.savefig(output / f"{name}_vs_global_block.png", dpi=180)
         plt.close()
+    enhance = frame[frame["mode"] == "enhance_text"].dropna(subset=["semantic_gain"])
+    if not enhance.empty:
+        category_curve = enhance.groupby(["category", "global_block_index"], as_index=False)["semantic_gain"].mean()
+        plt.figure(figsize=(14, 7))
+        sns.lineplot(
+            data=category_curve,
+            x="global_block_index",
+            y="semantic_gain",
+            hue="category",
+            marker="o",
+        )
+        plt.axvline(boundary, color="black", linestyle="--")
+        plt.axhline(0, color="gray", linewidth=1)
+        plt.tight_layout()
+        plt.savefig(output / "category_block_response_curves.png", dpi=180)
+        plt.close()
+        alpha_curve = enhance.groupby(["global_block_index", "alpha"], as_index=False)["semantic_gain"].mean()
+        if alpha_curve["alpha"].nunique() > 1:
+            plt.figure(figsize=(10, 6))
+            sns.lineplot(data=alpha_curve, x="alpha", y="semantic_gain", hue="global_block_index", marker="o")
+            plt.axhline(0, color="gray", linewidth=1)
+            plt.tight_layout()
+            plt.savefig(output / "alpha_sensitivity_curves.png", dpi=180)
+            plt.close()
 
 
 def main() -> None:
@@ -222,7 +286,7 @@ def main() -> None:
     (run_root / "selected_blocks.json").write_text(
         json.dumps(selected, ensure_ascii=False, indent=2), encoding="utf-8"
     )
-    plot_curves(summary, run_root / "plots")
+    plot_curves(summary, frame, run_root / "plots")
     print(json.dumps(selected, ensure_ascii=False, indent=2))
 
 
