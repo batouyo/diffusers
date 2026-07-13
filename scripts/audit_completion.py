@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import csv
 from collections import Counter
 from pathlib import Path
 
@@ -47,7 +48,24 @@ def main() -> None:
         "aggregate_results.py",
         "tests/test_interventions.py",
     ]
-    required_outputs = ["raw_metrics.csv", "block_summary.csv", "selected_blocks.json"]
+    required_outputs = ["raw_metrics.csv", "block_summary.csv", "stream_summary.csv", "selected_blocks.json"]
+    required_block_columns = {
+        "semantic_gain",
+        "semantic_drop",
+        "removal_edit_drop",
+        "preservation_cost",
+        "removal_preservation_cost",
+        "seed_gain_std",
+        "category_gain_json",
+        "block_type",
+        "block_class",
+    }
+    block_summary_path = run_root / "block_summary.csv"
+    block_columns = set()
+    if block_summary_path.exists():
+        with block_summary_path.open("r", encoding="utf-8", newline="") as handle:
+            block_columns = set(next(csv.reader(handle), []))
+    metric_tables_complete = all((run_root / path).exists() for path in required_outputs) and required_block_columns <= block_columns
     core_plots = [
         "semantic_gain_vs_global_block.png",
         "semantic_drop_vs_global_block.png",
@@ -113,7 +131,15 @@ def main() -> None:
             dict(mode_counts),
         ),
         check("all generated outputs evaluated", bool(metadata) and eval_count >= len(metadata), {"generated": len(metadata), "evaluated": eval_count}),
-        check("required metric tables", all((run_root / path).exists() for path in required_outputs), required_outputs),
+        check(
+            "required metric tables and protocol columns",
+            metric_tables_complete,
+            {
+                "files": required_outputs,
+                "required_block_columns": sorted(required_block_columns),
+                "observed_block_columns": sorted(block_columns),
+            },
+        ),
         check(
             "required plots (candidate comparison conditional on non-empty selection)",
             all((run_root / "plots" / path).exists() for path in required_plots),
