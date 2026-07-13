@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from aggregate_results import benjamini_hochberg, paired_metrics, select_candidates
+from aggregate_results import benjamini_hochberg, paired_metrics, select_candidates, summarize_blocks
 
 
 def test_paired_metrics_include_disable_and_remove_effects() -> None:
@@ -173,3 +173,41 @@ def test_stage2_is_strict_global_ranking_not_category_order_injection() -> None:
     selected = select_candidates(summary, frame, config)
     assert selected["stage2_blocks"] == list(range(15))
     assert 15 not in selected["stage2_blocks"]
+
+
+def test_block_summary_reports_positive_sample_and_category_counts() -> None:
+    rows = []
+    for sample_id, category, gain in [("s1", "color", 0.2), ("s2", "shape", -0.1)]:
+        rows.append(
+            {
+                "global_block_index": 0,
+                "mode": "enhance_text",
+                "alpha": 1.5,
+                "category": category,
+                "sample_id": sample_id,
+                "seed": 42,
+                "semantic_gain": gain,
+                "semantic_drop": np.nan,
+                "removal_edit_drop": np.nan,
+                "preservation_cost": 0.0,
+                "removal_preservation_cost": np.nan,
+                "bad_image": False,
+                "block_address": {"global_index": 0, "local_index": 0, "block_type": "double"},
+            }
+        )
+    config = {
+        "inference": {"alpha": 1.5},
+        "statistics": {
+            "bootstrap_samples": 20,
+            "random_seed": 7,
+            "dino_noninferiority_margin": -0.02,
+            "bad_image_rate_max": 0.01,
+            "universal_gain_min": 0.05,
+            "universal_drop_min": 0.05,
+        },
+    }
+    summary = summarize_blocks(pd.DataFrame(rows), config).iloc[0]
+    assert summary["positive_sample_count"] == 1
+    assert summary["sample_count"] == 2
+    assert summary["positive_categories"] == 1
+    assert summary["category_count"] == 2
