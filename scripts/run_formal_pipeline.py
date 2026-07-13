@@ -81,6 +81,7 @@ def main() -> None:
     (run_root / "stage3_blocks.json").write_text(json.dumps({"stage3_blocks": stage3}, indent=2), encoding="utf-8")
     run_jobs(config, "remove_block", device, 0, 1, stage3, "discovery", None)
     evaluate_and_aggregate(device)
+    command("scripts/verify_formal_complete.py")
 
     selection = json.loads((run_root / "selected_blocks.json").read_text(encoding="utf-8"))
     candidates = [int(value) for value in selection.get("selected_global_blocks", [])]

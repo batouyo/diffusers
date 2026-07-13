@@ -13,6 +13,7 @@ import yaml
 from evaluators import evaluation_hash
 from verify_pilot_complete import sentinel_current
 from verify_pilot_followup import sentinel_current as followup_sentinel_current
+from verify_formal_complete import sentinel_current as formal_sentinel_current
 
 
 ROOT = Path("/home/hyp/Code/flux-kontext-block-probing")
@@ -77,6 +78,7 @@ def main() -> None:
         "tests/test_expected_counts.py",
         "scripts/verify_pilot_complete.py",
         "scripts/verify_pilot_followup.py",
+        "scripts/verify_formal_complete.py",
     ]
     required_outputs = ["raw_metrics.csv", "block_summary.csv", "stream_summary.csv", "selected_blocks.json"]
     required_block_columns = {
@@ -118,6 +120,7 @@ def main() -> None:
         and mode_counts["disable_text"] >= expected_discovery * config["probing"]["stage2_blocks"]
         and mode_counts["remove_block"] >= expected_discovery * config["probing"]["stage3_blocks"]
     )
+    formal_verified = formal_sentinel_current(ROOT)
     validated_no_go = (
         formal_counts_complete
         and selection.get("status") == "no_go"
@@ -198,12 +201,13 @@ def main() -> None:
             dict(mode_counts),
         ),
         check(
-            "all generated outputs evaluated with current evaluator and valid metrics",
+            "all formal discovery outputs exactly generated and evaluated with current hashes",
             bool(metadata)
             and eval_count >= len(metadata)
             and valid_eval_count >= len(metadata)
             and sentinel_current(ROOT)
-            and followup_sentinel_current(ROOT),
+            and followup_sentinel_current(ROOT)
+            and formal_verified,
             {
                 "generated": len(metadata),
                 "evaluation_files": eval_count,
@@ -211,6 +215,7 @@ def main() -> None:
                 "expected_evaluation_hash": expected_evaluation_hash,
                 "pilot_pipeline_sentinel_current": sentinel_current(ROOT),
                 "pilot_followup_sentinel_current": followup_sentinel_current(ROOT),
+                "formal_discovery_sentinel_current": formal_verified,
             },
         ),
         check(
