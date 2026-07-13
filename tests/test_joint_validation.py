@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+import json
+
+import pytest
 import torch
 
+from probe_flux_kontext_blocks import file_sha256
+from scripts.aggregate_joint import load_joint
 from scripts.run_joint_validation import arms, joint_hash, random_controls
 
 
@@ -52,3 +57,40 @@ def test_joint_hash_changes_when_random_arm_definition_changes():
     first_hash = joint_hash(config, [0, 6], 1.5, first, "heldout", 512)
     second_hash = joint_hash(config, [0, 6], 1.5, second, "heldout", 512)
     assert first_hash != second_hash
+
+
+def test_joint_loader_requires_current_evaluation_and_matching_image_checksum(tmp_path):
+    folder = tmp_path / "joint" / "heldout" / "object" / "sample"
+    folder.mkdir(parents=True)
+    image = folder / "seed42_baseline.png"
+    image.write_bytes(b"joint-image")
+    metadata_path = image.with_suffix(".json")
+    metadata = {
+        "status": "complete",
+        "output_path": str(image),
+        "output_sha256": file_sha256(image),
+        "sample_id": "sample",
+        "seed": 42,
+        "resolution": 512,
+        "arm": "baseline",
+        "category": "object",
+        "joint_hash": "fingerprint",
+    }
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+    evaluation_path = metadata_path.with_suffix(".eval.json")
+    evaluation = {
+        "output_sha256": metadata["output_sha256"],
+        "evaluation_hash": "current-evaluator",
+        "dino_similarity": 0.9,
+        "lpips_distance": 0.1,
+        "quality": {"finite": True},
+        "vlm_parse_ok": True,
+        "s_edit": 2.0,
+    }
+    evaluation_path.write_text(json.dumps(evaluation), encoding="utf-8")
+    assert len(load_joint(tmp_path, "current-evaluator")) == 1
+
+    evaluation["evaluation_hash"] = "stale-evaluator"
+    evaluation_path.write_text(json.dumps(evaluation), encoding="utf-8")
+    with pytest.raises(RuntimeError, match="stale or incomplete"):
+        load_joint(tmp_path, "current-evaluator")

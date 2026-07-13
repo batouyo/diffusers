@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -13,10 +14,15 @@ import seaborn as sns
 import yaml
 
 from aggregate_results import cluster_macro, stratified_bootstrap
-from evaluators import evaluation_hash
+from evaluators import evaluation_hash, reusable_evaluation
+from probe_flux_kontext_blocks import file_sha256
+try:
+    from run_joint_validation import arms, joint_hash
+except ModuleNotFoundError:  # package import during tests
+    from scripts.run_joint_validation import arms, joint_hash
 
 
-def load_joint(run_root: Path) -> pd.DataFrame:
+def load_joint(run_root: Path, expected_evaluation_hash: str) -> pd.DataFrame:
     rows = []
     for meta_path in sorted((run_root / "joint").rglob("*.json")):
         if meta_path.name.endswith(".eval.json"):
@@ -26,6 +32,13 @@ def load_joint(run_root: Path) -> pd.DataFrame:
             continue
         meta = json.loads(meta_path.read_text(encoding="utf-8"))
         evaluation = json.loads(eval_path.read_text(encoding="utf-8"))
+        if not reusable_evaluation(
+            evaluation, meta, expected_evaluation_hash, require_vlm=True
+        ):
+            raise RuntimeError(f"joint evaluation is stale or incomplete: {eval_path}")
+        output_path = Path(meta.get("output_path", ""))
+        if not output_path.exists() or file_sha256(output_path) != meta.get("output_sha256"):
+            raise RuntimeError(f"joint image is missing or checksum-invalid: {output_path}")
         quality = evaluation.get("quality", {})
         rows.append(
             {
@@ -41,6 +54,7 @@ def load_joint(run_root: Path) -> pd.DataFrame:
                 ),
                 "vlm_parse_ok": evaluation.get("vlm_parse_ok"),
                 "evaluation_hash": evaluation.get("evaluation_hash"),
+                "evaluation_output_sha256": evaluation.get("output_sha256"),
             }
         )
     frame = pd.DataFrame(rows)
@@ -85,10 +99,10 @@ def main() -> None:
     config = yaml.safe_load(Path(args.config).read_text(encoding="utf-8"))
     run_id = args.run_id or config["project"]["run_id"]
     run_root = Path(config["project"]["output_root"]) / run_id
-    frame = load_joint(run_root)
+    expected_evaluation_hash = evaluation_hash(config)
+    frame = load_joint(run_root, expected_evaluation_hash)
     if frame.empty:
         raise RuntimeError("no evaluated joint-validation outputs")
-    expected_evaluation_hash = evaluation_hash(config)
     invalid_metrics = frame[
         (frame["evaluation_hash"] != expected_evaluation_hash)
         | (frame["vlm_parse_ok"] != True)
@@ -107,18 +121,34 @@ def main() -> None:
         for line in Path(config["project"]["dataset_manifest"]).read_text(encoding="utf-8").splitlines()
     ]
     heldout_rows = [row for row in dataset if row["split"] == "heldout"]
+    heldout_by_id = {row["id"]: row for row in heldout_rows}
     expected_per_arm = len(heldout_rows) * len(config["inference"]["seeds"])
-    random_arms = [f"random_{index:02d}" for index in range(config["probing"]["random_control_sets"])]
-    expected_arms = {
-        "baseline",
-        *(f"candidate_single_g{index:03d}" for index in candidates),
-        f"candidate_disable_g{candidates[0]:03d}",
-        "candidate_combo",
-        *random_arms,
-        "all_blocks",
-        "all_blocks_budget_matched",
-        "textailor_flux1dev_control",
+    selected_alpha_path = run_root / "selected_alpha.json"
+    if not selected_alpha_path.exists():
+        raise RuntimeError("selected_alpha.json is required to bind joint validation to alpha selection")
+    selected_alpha = float(json.loads(selected_alpha_path.read_text(encoding="utf-8"))["alpha"])
+    structure = json.loads(
+        (Path(config["project"]["output_root"]) / "preflight" / "structure_report.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    transformer_shape = SimpleNamespace(
+        transformer_blocks=[None] * int(structure["double_block_count"]),
+        single_transformer_blocks=[None] * int(structure["single_block_count"]),
+    )
+    arm_list = arms(
+        transformer_shape,
+        candidates,
+        selected_alpha,
+        int(config["probing"]["random_control_sets"]),
+        int(config["statistics"]["random_seed"]),
+        [int(value) for value in config["probing"]["forbidden_prior_blocks"]],
+    )
+    arm_specs = {
+        name: {"intervention_mode": mode, "block_indices": tuple(blocks), "alpha": float(alpha)}
+        for name, mode, blocks, alpha in arm_list
     }
+    expected_arms = set(arm_specs)
     observed_arms = set(frame["arm"])
     if observed_arms != expected_arms:
         raise RuntimeError(
@@ -132,9 +162,50 @@ def main() -> None:
     key_columns = ["arm", "sample_id", "seed", "resolution"]
     if frame.duplicated(key_columns).any():
         raise RuntimeError("duplicate evaluated joint jobs detected")
+    resolution = int(config["inference"]["resolution"])
+    expected_keys = {
+        (arm, row["id"], int(seed), resolution)
+        for arm in expected_arms
+        for row in heldout_rows
+        for seed in config["inference"]["seeds"]
+    }
+    observed_keys = {
+        (str(row["arm"]), str(row["sample_id"]), int(row["seed"]), int(row["resolution"]))
+        for _, row in frame.iterrows()
+    }
+    if observed_keys != expected_keys:
+        raise RuntimeError(
+            f"joint exact job matrix mismatch: missing={len(expected_keys - observed_keys)} "
+            f"unexpected={len(observed_keys - expected_keys)}"
+        )
+    expected_fingerprint = joint_hash(
+        config, candidates, selected_alpha, arm_list, "heldout", resolution
+    )
+    protocol_errors = []
+    for _, row in frame.iterrows():
+        spec = arm_specs[str(row["arm"])]
+        source = heldout_by_id.get(str(row["sample_id"]))
+        if (
+            row.get("status") != "complete"
+            or row.get("split") != "heldout"
+            or source is None
+            or row.get("category") != source["category"]
+            or row.get("intervention_mode") != spec["intervention_mode"]
+            or tuple(row.get("block_indices", [])) != spec["block_indices"]
+            or not np.isclose(float(row.get("alpha")), spec["alpha"])
+            or row.get("joint_hash") != expected_fingerprint
+            or row.get("evaluation_output_sha256") != row.get("output_sha256")
+        ):
+            protocol_errors.append(
+                (str(row.get("arm")), str(row.get("sample_id")), int(row.get("seed")))
+            )
+    if protocol_errors:
+        raise RuntimeError(f"joint protocol mismatch in {len(protocol_errors)} jobs: {protocol_errors[:3]}")
     joint_hashes = set(frame["joint_hash"].dropna())
-    if len(joint_hashes) != 1:
-        raise RuntimeError(f"joint outputs do not share one protocol fingerprint: {sorted(joint_hashes)}")
+    if joint_hashes != {expected_fingerprint}:
+        raise RuntimeError(
+            f"joint fingerprint mismatch: observed={sorted(joint_hashes)} expected={expected_fingerprint}"
+        )
     frame.to_csv(run_root / "joint_metrics.csv", index=False)
     summaries = []
     for arm, group in frame.groupby("arm"):
@@ -221,6 +292,9 @@ def main() -> None:
         "execution_status": "complete",
         "status": "validated" if success else "not_validated",
         "protocol_fingerprint": next(iter(joint_hashes)),
+        "expected_protocol_fingerprint": expected_fingerprint,
+        "exact_job_matrix_verified": True,
+        "image_checksums_verified": True,
         "expected_per_arm": expected_per_arm,
         "expected_total": expected_per_arm * len(expected_arms),
         "evaluated_total": int(len(frame)),

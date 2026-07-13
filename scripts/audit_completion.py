@@ -146,6 +146,9 @@ def main() -> None:
     joint = json.loads(joint_path.read_text(encoding="utf-8")) if joint_path.exists() else {}
     valid_joint = (
         joint.get("execution_status") == "complete"
+        and joint.get("exact_job_matrix_verified") is True
+        and joint.get("image_checksums_verified") is True
+        and joint.get("protocol_fingerprint") == joint.get("expected_protocol_fingerprint")
         and joint.get("expected_total", 0) > 0
         and joint.get("evaluated_total") == joint.get("expected_total")
         and joint.get("arm_counts")
