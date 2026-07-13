@@ -203,7 +203,13 @@ def select_candidates(summary: pd.DataFrame, frame: pd.DataFrame, config: dict) 
         (frame["mode"] == "enhance_text")
         & np.isclose(frame["alpha"].astype(float), float(config["inference"]["alpha"]))
     ]
+    verified_blocks = set(
+        int(value)
+        for value in summary.loc[summary["semantic_drop"].notna(), "global_block_index"].tolist()
+    )
     for (global_index, category), group in enhance.groupby(["global_block_index", "category"]):
+        if int(global_index) not in verified_blocks:
+            continue
         per_sample = group.groupby("sample_id")["semantic_gain"].mean().dropna()
         if len(per_sample) < 2:
             continue
