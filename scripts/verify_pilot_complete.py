@@ -11,7 +11,7 @@ import numpy as np
 
 from evaluators import evaluation_hash, reusable_evaluation
 from expected_counts import ROOT, load_counts
-from probe_flux_kontext_blocks import experiment_hash, load_config
+from probe_flux_kontext_blocks import experiment_hash, file_sha256, load_config
 
 
 SENTINEL_NAME = "pilot_pipeline_complete.json"
@@ -32,6 +32,7 @@ def sentinel_current(root: Path = ROOT) -> bool:
         and value.get("expected_jobs") == load_counts(root)["pilot_stage1_jobs"]
         and value.get("generation_hash") == experiment_hash(config)
         and value.get("evaluation_hash") == evaluation_hash(config)
+        and value.get("verification_protocol_hash") == file_sha256(__file__)
         and value.get("valid_evaluations") == value.get("expected_jobs")
     )
 
@@ -84,6 +85,9 @@ def verify(root: Path = ROOT, *, write: bool = True) -> dict:
         raise RuntimeError(f"pilot contains {len(stale_generation)} stale generation records")
     valid_evaluations = 0
     for meta_path, meta in records:
+        image_path = Path(meta.get("output_path", ""))
+        if not image_path.exists() or file_sha256(image_path) != meta.get("output_sha256"):
+            raise RuntimeError(f"pilot image missing or checksum-invalid: {image_path}")
         eval_path = meta_path.with_suffix(".eval.json")
         if not eval_path.exists():
             continue
@@ -106,6 +110,8 @@ def verify(root: Path = ROOT, *, write: bool = True) -> dict:
         "valid_evaluations": valid_evaluations,
         "generation_hash": generation_hash,
         "evaluation_hash": evaluator_hash,
+        "verification_protocol_hash": file_sha256(__file__),
+        "images_rehashed": True,
         "git_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip(),
         "aggregate_files": aggregate_files,
     }

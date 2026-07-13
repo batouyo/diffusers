@@ -11,7 +11,7 @@ from pathlib import Path
 
 from evaluators import evaluation_hash, reusable_evaluation
 from expected_counts import ROOT, load_counts
-from probe_flux_kontext_blocks import experiment_hash, load_config
+from probe_flux_kontext_blocks import experiment_hash, file_sha256, load_config
 
 
 SENTINEL_NAME = "pilot_followup_complete.json"
@@ -42,6 +42,7 @@ def sentinel_current(root: Path = ROOT) -> bool:
         value.get("status") == "complete"
         and value.get("generation_hash") == experiment_hash(derived)
         and value.get("evaluation_hash") == evaluation_hash(config)
+        and value.get("verification_protocol_hash") == file_sha256(__file__)
         and value.get("stage2_blocks") == stage2_blocks
         and value.get("stage3_blocks") == stage3_blocks
         and value.get("valid_disable_evaluations") == value.get("expected_disable_jobs")
@@ -102,6 +103,9 @@ def verify(root: Path = ROOT, *, write: bool = True) -> dict:
     for mode, items in records.items():
         count = 0
         for meta_path, meta in items:
+            image_path = Path(meta.get("output_path", ""))
+            if not image_path.exists() or file_sha256(image_path) != meta.get("output_sha256"):
+                raise RuntimeError(f"{mode} image missing or checksum-invalid: {image_path}")
             eval_path = meta_path.with_suffix(".eval.json")
             if not eval_path.exists():
                 continue
@@ -124,6 +128,8 @@ def verify(root: Path = ROOT, *, write: bool = True) -> dict:
         "valid_remove_evaluations": valid["remove_block"],
         "generation_hash": generation_hash,
         "evaluation_hash": evaluator_hash,
+        "verification_protocol_hash": file_sha256(__file__),
+        "images_rehashed": True,
         "git_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip(),
     }
     if write:
