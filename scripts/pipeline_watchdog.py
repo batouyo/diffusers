@@ -13,11 +13,12 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+from expected_counts import load_counts
+
 
 ROOT = Path("/home/hyp/Code/flux-kontext-block-probing")
 RUN_ROOT = Path("/data15/hyp/project_storage/flux-kontext-block-probing/main_512")
 LOG = ROOT / "logs" / "watchdog.log"
-PILOT_EXPECTED = 2320
 MAX_RESTARTS = 3
 POLL_SECONDS = 120
 
@@ -87,6 +88,7 @@ def main() -> None:
     calibration_restarts = 0
     report_restarts = 0
     formal_restarts = 0
+    pilot_expected = load_counts(ROOT)["pilot_stage1_jobs"]
     log("watchdog active; fixed GPU selection remains inside stage scripts")
     while True:
         png_count = count("*.png")
@@ -107,7 +109,7 @@ def main() -> None:
         status_payload = {
             "updated_at_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "pilot_png": png_count,
-            "pilot_expected": PILOT_EXPECTED,
+            "pilot_expected": pilot_expected,
             "pilot_eval": eval_count,
             "sessions": {
                 "pilot": pilot,
@@ -126,7 +128,7 @@ def main() -> None:
         }
         write_status(status_payload)
         log(
-            f"pilot_png={png_count}/{PILOT_EXPECTED} pilot_eval={eval_count}/{PILOT_EXPECTED} "
+            f"pilot_png={png_count}/{pilot_expected} pilot_eval={eval_count}/{pilot_expected} "
             f"pilot_session={pilot} followup_session={followup} stage3_ready={stage3_ready} "
             f"alpha_ready={alpha_ready} calibration_ready={calibration_ready} gate={calibration_gate}"
         )
@@ -135,14 +137,14 @@ def main() -> None:
             log("completion audit is complete; watchdog exiting")
             return
 
-        pilot_incomplete = png_count < PILOT_EXPECTED or eval_count < PILOT_EXPECTED
+        pilot_incomplete = png_count < pilot_expected or eval_count < pilot_expected
         if not pilot and pilot_incomplete and pilot_restarts < MAX_RESTARTS:
             pilot_restarts += 1
             start_session("flux_probe_pilot", str(ROOT / "scripts" / "run_pilot_pipeline.sh"))
         elif (
             not pilot
-            and png_count >= PILOT_EXPECTED
-            and eval_count >= PILOT_EXPECTED
+            and png_count >= pilot_expected
+            and eval_count >= pilot_expected
             and not followup
             and not stage3_ready
             and followup_restarts < MAX_RESTARTS
@@ -161,7 +163,7 @@ def main() -> None:
             start_session("flux_probe_alpha", str(ROOT / "scripts" / "run_alpha_after_followup.sh"))
 
         if (
-            eval_count >= PILOT_EXPECTED
+            eval_count >= pilot_expected
             and not calibration_ready
             and not calibration
             and calibration_restarts < MAX_RESTARTS

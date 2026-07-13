@@ -72,6 +72,7 @@ def main() -> None:
         "tests/test_interventions.py",
         "tests/test_aggregation.py",
         "tests/test_joint_validation.py",
+        "tests/test_expected_counts.py",
     ]
     required_outputs = ["raw_metrics.csv", "block_summary.csv", "stream_summary.csv", "selected_blocks.json"]
     required_block_columns = {
@@ -147,7 +148,7 @@ def main() -> None:
             "independent required source files and commit-bound tests",
             all((ROOT / path).exists() for path in required_code)
             and test_report.get("status") == "pass"
-            and int(test_report.get("passed_tests") or 0) >= 18
+            and int(test_report.get("passed_tests") or 0) >= 19
             and test_report.get("git_commit") == current_commit,
             {
                 "required_code": required_code,
