@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import csv
+import subprocess
 from collections import Counter
 from pathlib import Path
 
@@ -23,8 +24,11 @@ def main() -> None:
     run_root = output_root / config["project"]["run_id"]
     structure_path = output_root / "preflight" / "structure_report.json"
     identity_path = output_root / "preflight" / "identity_report.json"
+    test_report_path = output_root / "preflight" / "test_report.json"
     structure = json.loads(structure_path.read_text(encoding="utf-8")) if structure_path.exists() else {}
     identity = json.loads(identity_path.read_text(encoding="utf-8")) if identity_path.exists() else {}
+    test_report = json.loads(test_report_path.read_text(encoding="utf-8")) if test_report_path.exists() else {}
+    current_commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
     dataset = [json.loads(line) for line in (ROOT / "dataset.jsonl").read_text(encoding="utf-8").splitlines()]
     data_counts = Counter((row["category"], row["split"]) for row in dataset)
     metadata = []
@@ -47,6 +51,8 @@ def main() -> None:
         "evaluators.py",
         "aggregate_results.py",
         "tests/test_interventions.py",
+        "tests/test_aggregation.py",
+        "tests/test_joint_validation.py",
     ]
     required_outputs = ["raw_metrics.csv", "block_summary.csv", "stream_summary.csv", "selected_blocks.json"]
     required_block_columns = {
@@ -105,7 +111,20 @@ def main() -> None:
     )
     joint_or_no_go = valid_joint or validated_no_go
     checks = [
-        check("independent required source files", all((ROOT / path).exists() for path in required_code), required_code),
+        check(
+            "independent required source files and commit-bound tests",
+            all((ROOT / path).exists() for path in required_code)
+            and test_report.get("status") == "pass"
+            and int(test_report.get("passed_tests") or 0) >= 16
+            and test_report.get("git_commit") == current_commit,
+            {
+                "required_code": required_code,
+                "test_report": test_report_path,
+                "tested_commit": test_report.get("git_commit"),
+                "current_commit": current_commit,
+                "passed_tests": test_report.get("passed_tests"),
+            },
+        ),
         check("runtime structure report", total_blocks > 0 and len(structure.get("blocks", [])) == total_blocks, structure_path),
         check(
             "alpha=1 numerical equivalence",

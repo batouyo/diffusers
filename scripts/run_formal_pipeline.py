@@ -61,6 +61,7 @@ def select_alpha(config: dict, candidates: list[int]) -> float:
 
 
 def main() -> None:
+    command("scripts/run_tests_with_report.py")
     config = load_config(ROOT / "probe_config.yaml")
     device = "cuda:0"
     run_root = Path(config["project"]["output_root"]) / config["project"]["run_id"]
