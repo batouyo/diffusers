@@ -49,14 +49,36 @@ def main() -> None:
             selected_streams[stream] += 1
     destructive = []
     if not summary.empty:
-        risky = summary.sort_values(["preservation_cost", "bad_image_rate"], ascending=False).head(8)
+        cost_columns = [
+            column
+            for column in ["preservation_cost", "removal_preservation_cost"]
+            if column in summary
+        ]
+        bad_columns = [
+            column
+            for column in ["bad_image_rate", "disable_bad_image_rate", "remove_bad_image_rate"]
+            if column in summary
+        ]
+        summary["maximum_structure_cost"] = summary[cost_columns].max(axis=1, skipna=True)
+        summary["maximum_bad_image_rate"] = summary[bad_columns].max(axis=1, skipna=True)
+        risky = summary.sort_values(
+            ["maximum_structure_cost", "maximum_bad_image_rate"], ascending=False
+        ).head(8)
         destructive = [
             {
                 "global_block_index": int(row["global_block_index"]),
                 "stream": row["block_type"],
+                "block_class": row.get("block_class"),
                 "semantic_gain": None if pd.isna(row["semantic_gain"]) else float(row["semantic_gain"]),
+                "semantic_drop": None if pd.isna(row.get("semantic_drop")) else float(row["semantic_drop"]),
+                "removal_edit_drop": None
+                if pd.isna(row.get("removal_edit_drop"))
+                else float(row["removal_edit_drop"]),
                 "preservation_cost": None if pd.isna(row["preservation_cost"]) else float(row["preservation_cost"]),
-                "bad_image_rate": float(row["bad_image_rate"]),
+                "removal_preservation_cost": None
+                if pd.isna(row.get("removal_preservation_cost"))
+                else float(row["removal_preservation_cost"]),
+                "maximum_bad_image_rate": float(row["maximum_bad_image_rate"]),
             }
             for _, row in risky.iterrows()
         ]
@@ -146,7 +168,7 @@ TexTailor 编号只在候选锁定后作为对照使用。候选组合相对其�
 
 ## Evidence
 
-- `raw_metrics.csv`, `block_summary.csv`, `alpha_summary.csv`
+- `raw_metrics.csv`, `block_summary.csv`, `stream_summary.csv`, `alpha_summary.csv`
 - `selected_blocks.json` and, when candidates exist, `joint_metrics.csv`, `joint_summary.csv`, `joint_validation.json`
 - `FORMAL_NO_GO.json` when no candidate clears the preregistered gates
 - `plots/` and, when candidates exist, `plots/image_grids/`
