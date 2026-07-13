@@ -9,6 +9,8 @@ import logging
 import os
 import re
 import tempfile
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
@@ -312,17 +314,30 @@ def main() -> None:
             except Exception:
                 pass
         row = dataset[meta["sample_id"]]
+        item_started = time.perf_counter()
+        component_seconds = {}
+        component_started = time.perf_counter()
+        quality = quality_flags(meta["output_path"])
+        component_seconds["quality"] = time.perf_counter() - component_started
+        component_started = time.perf_counter()
+        dino_similarity = dino.similarity(row["image"], meta["output_path"])
+        component_seconds["dino"] = time.perf_counter() - component_started
+        component_started = time.perf_counter()
+        lpips_distance = lpips_metric.distance(row["image"], meta["output_path"])
+        component_seconds["lpips"] = time.perf_counter() - component_started
         result = {
             "sample_id": meta["sample_id"],
             "output_path": meta["output_path"],
             "output_sha256": meta["output_sha256"],
-            "quality": quality_flags(meta["output_path"]),
-            "dino_similarity": dino.similarity(row["image"], meta["output_path"]),
+            "quality": quality,
+            "dino_similarity": dino_similarity,
             "dino_model": dino.model_path,
-            "lpips_distance": lpips_metric.distance(row["image"], meta["output_path"]),
+            "lpips_distance": lpips_distance,
             "evaluation_hash": evaluator_hash,
+            "evaluated_at_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         }
         if judge is not None:
+            vlm_started = time.perf_counter()
             last_error = None
             for attempt in range(1, args.vlm_attempts + 1):
                 try:
@@ -359,6 +374,11 @@ def main() -> None:
                     }
                 )
                 failures.append(meta["output_path"])
+            component_seconds["vlm"] = time.perf_counter() - vlm_started
+        else:
+            component_seconds["vlm"] = 0.0
+        component_seconds["total"] = time.perf_counter() - item_started
+        result["timing_seconds"] = component_seconds
         atomic_json(eval_path, result)
         LOGGER.info("[%d/%d] evaluated %s", index, len(metadata), meta["output_path"])
     if failures:
