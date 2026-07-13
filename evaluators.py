@@ -223,7 +223,12 @@ def main() -> None:
     for index, (meta_path, meta) in enumerate(metadata, 1):
         eval_path = meta_path.with_suffix(".eval.json")
         if eval_path.exists():
-            continue
+            try:
+                prior = json.loads(eval_path.read_text(encoding="utf-8"))
+                if prior.get("output_sha256") == meta.get("output_sha256"):
+                    continue
+            except Exception:
+                pass
         row = dataset[meta["sample_id"]]
         result = {
             "sample_id": meta["sample_id"],
