@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-from collections import defaultdict
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont, ImageOps
@@ -17,18 +16,18 @@ ROOT = Path("/home/hyp/Code/flux-kontext-block-probing")
 
 def load_metadata(root: Path) -> list[dict]:
     result = []
-    for folder in [root / "images", root / "joint"]:
-        if not folder.exists():
+    folder = root / "joint"
+    if not folder.exists():
+        return result
+    for path in folder.rglob("*.json"):
+        if path.name.endswith(".eval.json"):
             continue
-        for path in folder.rglob("*.json"):
-            if path.name.endswith(".eval.json"):
-                continue
-            try:
-                value = json.loads(path.read_text(encoding="utf-8"))
-            except Exception:
-                continue
-            if value.get("status") == "complete" and value.get("output_path"):
-                result.append(value)
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if value.get("status") == "complete" and value.get("output_path"):
+            result.append(value)
     return result
 
 
@@ -47,21 +46,11 @@ def panel(path: str | None, label: str, size: int = 384) -> Image.Image:
 def find_arm(records: list[dict], sample_id: str, arm: str, candidate: int) -> str | None:
     candidates = [row for row in records if row.get("sample_id") == sample_id and row.get("seed") == 42]
     if arm == "baseline":
-        rows = [row for row in candidates if row.get("arm") == "baseline" or row.get("mode") == "baseline"]
+        rows = [row for row in candidates if row.get("arm") == "baseline"]
     elif arm == "candidate":
-        rows = [
-            row
-            for row in candidates
-            if row.get("arm") == f"candidate_single_g{candidate:03d}"
-            or (row.get("mode") == "enhance_text" and row.get("global_block_index") == candidate)
-        ]
+        rows = [row for row in candidates if row.get("arm") == "candidate_combo"]
     elif arm == "disable":
-        rows = [
-            row
-            for row in candidates
-            if row.get("arm") == f"candidate_disable_g{candidate:03d}"
-            or (row.get("mode") == "disable_text" and row.get("global_block_index") == candidate)
-        ]
+        rows = [row for row in candidates if row.get("arm") == f"candidate_disable_g{candidate:03d}"]
     elif arm == "random":
         rows = [row for row in candidates if row.get("arm") == "random_00"]
     elif arm == "all":
@@ -79,10 +68,18 @@ def main() -> None:
     config = yaml.safe_load(Path(args.config).read_text(encoding="utf-8"))
     run_root = Path(config["project"]["output_root"]) / config["project"]["run_id"]
     selection = json.loads((run_root / "selected_blocks.json").read_text(encoding="utf-8"))
-    candidates = selection.get("selected_global_blocks") or []
+    candidates = [int(value) for value in selection.get("selected_global_blocks") or []]
     if not candidates:
         raise RuntimeError("no independently selected candidate is available for held-out grids")
-    candidate = int(candidates[0])
+    candidate = candidates[0]
+    joint = json.loads((run_root / "joint_validation.json").read_text(encoding="utf-8"))
+    if (
+        joint.get("execution_status") != "complete"
+        or joint.get("exact_job_matrix_verified") is not True
+        or joint.get("image_checksums_verified") is not True
+        or joint.get("protocol_fingerprint") != joint.get("expected_protocol_fingerprint")
+    ):
+        raise RuntimeError("held-out image grids require exact current joint-validation evidence")
     dataset = [json.loads(line) for line in Path(config["project"]["dataset_manifest"]).read_text(encoding="utf-8").splitlines()]
     records = load_metadata(run_root)
     grids = run_root / "plots" / "image_grids"
@@ -105,7 +102,7 @@ def main() -> None:
         items = [
             panel(paths["source"], "source"),
             panel(paths["baseline"], "baseline"),
-            panel(paths["candidate"], f"candidate g{candidate}"),
+            panel(paths["candidate"], f"candidate combo {candidates}"),
             panel(paths["disable"], f"disable g{candidate}"),
             panel(paths["random"], "random matched"),
             panel(paths["all_blocks"], "all blocks"),
@@ -119,7 +116,7 @@ def main() -> None:
             {
                 "category": category,
                 "sample_id": sample_id,
-                "candidate_global_block": candidate,
+                "candidate_global_blocks": candidates,
                 "panels": {
                     name: {
                         "path": str(path),
@@ -135,7 +132,8 @@ def main() -> None:
         raise RuntimeError("one held-out grid per edit category is required")
     manifest = {
         "status": "complete",
-        "candidate_global_block": candidate,
+        "candidate_global_blocks": candidates,
+        "joint_protocol_fingerprint": joint["protocol_fingerprint"],
         "categories": list(config["dataset"]["categories"]),
         "grids": manifest_rows,
     }

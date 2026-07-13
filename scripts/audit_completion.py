@@ -11,6 +11,7 @@ from pathlib import Path
 import yaml
 
 from evaluators import evaluation_hash
+from probe_flux_kontext_blocks import file_sha256
 from verify_pilot_complete import sentinel_current
 from verify_pilot_followup import sentinel_current as followup_sentinel_current
 from verify_formal_complete import sentinel_current as formal_sentinel_current
@@ -141,19 +142,27 @@ def main() -> None:
         if calibration_manifest_path.exists()
         else {}
     )
+    joint_path = run_root / "joint_validation.json"
+    joint = json.loads(joint_path.read_text(encoding="utf-8")) if joint_path.exists() else {}
     valid_grids = validated_no_go or (
         grid_manifest.get("status") == "complete"
+        and grid_manifest.get("candidate_global_blocks") == candidates
+        and grid_manifest.get("joint_protocol_fingerprint") == joint.get("protocol_fingerprint")
         and set(grid_manifest.get("categories", [])) == set(config["dataset"]["categories"])
         and len(grid_manifest.get("grids", [])) == len(config["dataset"]["categories"])
         and all(
             Path(item.get("grid_path", "")).exists()
+            and file_sha256(Path(item["grid_path"])) == item.get("grid_sha256")
             and set(item.get("panels", {})) == {"source", "baseline", "candidate", "disable", "random", "all_blocks"}
-            and all(Path(panel.get("path", "")).exists() and panel.get("sha256") for panel in item.get("panels", {}).values())
+            and all(
+                Path(panel.get("path", "")).exists()
+                and panel.get("sha256")
+                and file_sha256(Path(panel["path"])) == panel["sha256"]
+                for panel in item.get("panels", {}).values()
+            )
             for item in grid_manifest.get("grids", [])
         )
     )
-    joint_path = run_root / "joint_validation.json"
-    joint = json.loads(joint_path.read_text(encoding="utf-8")) if joint_path.exists() else {}
     valid_joint = (
         joint.get("execution_status") == "complete"
         and joint.get("exact_job_matrix_verified") is True
