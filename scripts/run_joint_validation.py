@@ -71,7 +71,14 @@ def random_controls(
     return sorted(result)
 
 
-def arms(transformer, candidates: list[int], alpha: float, random_sets: int, seed: int):
+def arms(
+    transformer,
+    candidates: list[int],
+    alpha: float,
+    random_sets: int,
+    seed: int,
+    textailor_control_blocks: list[int],
+):
     n_double = len(transformer.transformer_blocks)
     total = n_double + len(transformer.single_transformer_blocks)
     result = [("baseline", "none", tuple(), 1.0)]
@@ -83,7 +90,7 @@ def arms(transformer, candidates: list[int], alpha: float, random_sets: int, see
     result.append(("all_blocks", "enhance_text", tuple(range(total)), alpha))
     budget_alpha = 1.0 + len(candidates) / total * (alpha - 1.0)
     result.append(("all_blocks_budget_matched", "enhance_text", tuple(range(total)), budget_alpha))
-    textailor = tuple(index for index in [2, 7, 12, 17, 22] if index < total)
+    textailor = tuple(index for index in textailor_control_blocks if 0 <= index < total)
     result.append(("textailor_flux1dev_control", "enhance_text", textailor, alpha))
     return result
 
@@ -132,6 +139,7 @@ def run(args) -> None:
         args.alpha,
         args.random_sets,
         config["statistics"]["random_seed"],
+        [int(value) for value in config["probing"]["forbidden_prior_blocks"]],
     )
     rows = [row for row in load_dataset(config["project"]["dataset_manifest"]) if row["split"] == args.split]
     if args.max_samples_per_category is not None:

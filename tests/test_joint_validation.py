@@ -22,7 +22,14 @@ def test_random_controls_match_stream_counts_and_exclude_candidates():
 
 
 def test_arms_include_required_controls_and_budget_match():
-    values = arms(ToyTransformer(), [0, 5], alpha=1.5, random_sets=3, seed=9)
+    values = arms(
+        ToyTransformer(),
+        [0, 5],
+        alpha=1.5,
+        random_sets=3,
+        seed=9,
+        textailor_control_blocks=[2, 7, 12, 17, 22],
+    )
     lookup = {name: (mode, blocks, alpha) for name, mode, blocks, alpha in values}
     assert "candidate_combo" in lookup
     assert "all_blocks" in lookup
