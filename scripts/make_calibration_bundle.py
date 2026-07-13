@@ -7,6 +7,7 @@ import hashlib
 import html
 import json
 import shutil
+import zipfile
 from collections import defaultdict
 from pathlib import Path
 
@@ -191,7 +192,28 @@ document.getElementById('export').addEventListener('click', () => {{
 update();
 </script></body></html>"""
     (output / "index.html").write_text(document, encoding="utf-8")
-    print(json.dumps({"examples": len(blinded_rows), "output": str(output)}, indent=2))
+    instructions = """FLUX-Kontext blinded edit-completion calibration
+
+1. Open index.html in a modern browser.
+2. Judge only whether the requested edit is visible on the correct object/region.
+3. Use integer scores: 0 absent; 1 barely visible/mostly wrong; 2 partial; 3 mostly correct; 4 clear and correct.
+4. Enter brief visible evidence for every score.
+5. Click Validate & export CSV after all 80 examples are complete.
+6. Return the exported blinded_labels.csv without opening any sealed-key file.
+"""
+    (output / "RATING_INSTRUCTIONS.txt").write_text(instructions, encoding="utf-8")
+    archive = output / "blinded_calibration_bundle.zip"
+    with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_STORED) as handle:
+        for name in ["index.html", "blinded_labels.csv", "RATING_INSTRUCTIONS.txt"]:
+            handle.write(output / name, arcname=name)
+        for image_path in sorted(images.glob("*.png")):
+            handle.write(image_path, arcname=f"images/{image_path.name}")
+    print(
+        json.dumps(
+            {"examples": len(blinded_rows), "output": str(output), "blind_archive": str(archive)},
+            indent=2,
+        )
+    )
 
 
 if __name__ == "__main__":

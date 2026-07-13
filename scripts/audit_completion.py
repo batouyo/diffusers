@@ -228,7 +228,19 @@ def main() -> None:
                 "valid_image_grids": valid_grids,
             },
         ),
-        check("80-example calibration bundle", (run_root / "calibration" / "blinded_labels.csv").exists(), run_root / "calibration"),
+        check(
+            "80-example calibration bundle",
+            all(
+                (run_root / "calibration" / name).exists()
+                for name in [
+                    "blinded_labels.csv",
+                    "index.html",
+                    "RATING_INSTRUCTIONS.txt",
+                    "blinded_calibration_bundle.zip",
+                ]
+            ),
+            run_root / "calibration",
+        ),
         check(
             "human calibration gate",
             (run_root / "calibration" / "calibration_report.json").exists()

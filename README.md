@@ -59,6 +59,8 @@ When ready, open:
 
 `/data15/hyp/project_storage/flux-kontext-block-probing/main_512/calibration/index.html`
 
+For a portable blind package, download and extract `calibration/blinded_calibration_bundle.zip`. It intentionally excludes `sealed_key.json` and all VLM scores.
+
 For every blinded example, select an integer score from 0 to 4 and enter brief visible evidence. The page saves progress in browser local storage and exports `blinded_labels.csv` only after all 80 rows are complete. Replace the blank CSV in the same calibration directory, then run:
 
 ```bash
