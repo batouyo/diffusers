@@ -35,6 +35,8 @@ def main() -> None:
     identity = json.loads(identity_path.read_text(encoding="utf-8")) if identity_path.exists() else {}
     test_report = json.loads(test_report_path.read_text(encoding="utf-8")) if test_report_path.exists() else {}
     current_commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
+    final_report_path = run_root / "FINAL_REPORT.md"
+    final_report_text = final_report_path.read_text(encoding="utf-8") if final_report_path.exists() else ""
     dataset = [json.loads(line) for line in (ROOT / "dataset.jsonl").read_text(encoding="utf-8").splitlines()]
     data_counts = Counter((row["category"], row["split"]) for row in dataset)
     metadata = []
@@ -295,7 +297,11 @@ def main() -> None:
                 "validated_no_go": validated_no_go,
             },
         ),
-        check("final report", (run_root / "FINAL_REPORT.md").exists(), run_root / "FINAL_REPORT.md"),
+        check(
+            "final report bound to current project commit",
+            final_report_path.exists() and current_commit in final_report_text,
+            {"path": final_report_path, "current_commit": current_commit},
+        ),
     ]
     required = [item for item in checks if item["required"]]
     result = {

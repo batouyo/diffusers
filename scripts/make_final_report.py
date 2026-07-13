@@ -9,6 +9,17 @@ from pathlib import Path
 import pandas as pd
 import yaml
 
+try:
+    from verify_alpha_scan import sentinel_current as alpha_sentinel_current
+    from verify_formal_complete import sentinel_current as formal_sentinel_current
+    from verify_pilot_complete import sentinel_current as pilot_sentinel_current
+    from verify_pilot_followup import sentinel_current as followup_sentinel_current
+except ModuleNotFoundError:  # package import during tests
+    from scripts.verify_alpha_scan import sentinel_current as alpha_sentinel_current
+    from scripts.verify_formal_complete import sentinel_current as formal_sentinel_current
+    from scripts.verify_pilot_complete import sentinel_current as pilot_sentinel_current
+    from scripts.verify_pilot_followup import sentinel_current as followup_sentinel_current
+
 
 ROOT = Path("/home/hyp/Code/flux-kontext-block-probing")
 
@@ -24,6 +35,37 @@ def verdict(comparison: dict | None) -> str:
     return f"{direction}；配对差值={comparison['mean']:.4f}，95% CI=[{comparison['ci_low']:.4f}, {comparison['ci_high']:.4f}]。"
 
 
+def research_status(
+    joint: dict,
+    calibration: dict,
+    candidates: list[int],
+    selection: dict,
+    no_go: dict,
+    core_verified: bool,
+) -> str:
+    joint_exact = bool(
+        joint.get("execution_status") == "complete"
+        and joint.get("exact_job_matrix_verified") is True
+        and joint.get("image_checksums_verified") is True
+        and joint.get("protocol_fingerprint") == joint.get("expected_protocol_fingerprint")
+    )
+    validated_no_go = bool(
+        not candidates
+        and selection.get("status") == "no_go"
+        and no_go.get("status") == "validated_no_go"
+        and no_go.get("selected_global_blocks") == []
+    )
+    if not core_verified or not calibration.get("gate_pass"):
+        return "NOT VALIDATED"
+    if joint_exact and joint.get("status") == "validated":
+        return "VALIDATED CANDIDATE SET"
+    if joint_exact:
+        return "VALIDATED NEGATIVE JOINT RESULT"
+    if validated_no_go:
+        return "VALIDATED NO-GO"
+    return "NOT VALIDATED"
+
+
 def main() -> None:
     config = yaml.safe_load((ROOT / "probe_config.yaml").read_text(encoding="utf-8"))
     output_root = Path(config["project"]["output_root"])
@@ -35,6 +77,10 @@ def main() -> None:
     joint = load_json(run_root / "joint_validation.json", {})
     no_go = load_json(run_root / "FORMAL_NO_GO.json", {})
     calibration = load_json(run_root / "calibration" / "calibration_report.json", {})
+    pilot_verified = pilot_sentinel_current(ROOT)
+    followup_verified = followup_sentinel_current(ROOT)
+    formal_verified = formal_sentinel_current(ROOT)
+    pilot_alpha_verified = alpha_sentinel_current(ROOT, "pilot")
     summary = pd.read_csv(run_root / "block_summary.csv") if (run_root / "block_summary.csv").exists() else pd.DataFrame()
     candidates = [int(value) for value in selection.get("selected_global_blocks", [])]
     stream_lookup = {}
@@ -84,20 +130,22 @@ def main() -> None:
         ]
     comparisons = joint.get("comparisons", {})
     commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
-    validated_no_go = (
-        not candidates
-        and selection.get("status") == "no_go"
-        and no_go.get("status") == "validated_no_go"
-        and calibration.get("gate_pass")
+    formal_alpha_verified = not candidates or alpha_sentinel_current(ROOT, "formal")
+    core_gates = {
+        "pilot_stage1": pilot_verified,
+        "pilot_followup": followup_verified,
+        "pilot_alpha": pilot_alpha_verified,
+        "formal_discovery": formal_verified,
+        "formal_alpha_or_no_go": formal_alpha_verified,
+    }
+    status = research_status(
+        joint,
+        calibration,
+        candidates,
+        selection,
+        no_go,
+        all(core_gates.values()),
     )
-    if joint.get("execution_status") == "complete" and joint.get("status") == "validated" and calibration.get("gate_pass"):
-        status = "VALIDATED CANDIDATE SET"
-    elif joint.get("execution_status") == "complete" and calibration.get("gate_pass"):
-        status = "VALIDATED NEGATIVE JOINT RESULT"
-    elif validated_no_go:
-        status = "VALIDATED NO-GO"
-    else:
-        status = "NOT VALIDATED"
     final = f"""# FLUX.1-Kontext-dev Text Block Probing — Final Report
 
 ## Executive status
@@ -110,6 +158,7 @@ def main() -> None:
 - Runtime blocks: {structure.get('double_block_count')} double + {structure.get('single_block_count')} single = {structure.get('total_block_count')}
 - Alpha=1 identity: `{identity.get('status')}`
 - Human/VLM calibration gate: `{calibration.get('gate_pass', False)}`
+- Hash-current execution gates: `{core_gates}`
 - Selected universal blocks: `{selection.get('universal_blocks', [])}`
 - Selected category-specific blocks: `{selection.get('category_specific_blocks', {})}`
 - Common alpha*: `{alpha.get('alpha', 'not selected')}`
@@ -173,6 +222,7 @@ TexTailor 编号只在候选锁定后作为对照使用。候选组合相对其�
 - `raw_metrics.csv`, `block_summary.csv`, `stream_summary.csv`, `alpha_summary.csv`
 - `selected_blocks.json` and, when candidates exist, `joint_metrics.csv`, `joint_summary.csv`, `joint_category_summary.csv`, `joint_seed_summary.csv`, `joint_validation.json`
 - `FORMAL_NO_GO.json` when no candidate clears the preregistered gates
+- `pilot_pipeline_complete.json`, `pilot_followup_complete.json`, `pilot_alpha_complete.json`, `formal_discovery_complete.json`, and `formal_alpha_complete.json` when applicable
 - `plots/` and, when candidates exist, `plots/image_grids/`
 - `calibration/` and `completion_audit.json`
 """
