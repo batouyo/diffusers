@@ -134,6 +134,7 @@ def main() -> None:
     formal_verified = formal_sentinel_current(ROOT)
     validated_no_go = (
         formal_counts_complete
+        and formal_verified
         and selection.get("status") == "no_go"
         and candidates == []
         and no_go.get("status") == "validated_no_go"

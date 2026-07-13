@@ -146,6 +146,7 @@ def main() -> None:
         no_go,
         all(core_gates.values()),
     )
+    installable_candidates = candidates if status == "VALIDATED CANDIDATE SET" else []
     final = f"""# FLUX.1-Kontext-dev Text Block Probing — Final Report
 
 ## Executive status
@@ -177,6 +178,8 @@ def main() -> None:
 
 Universal：`{selection.get('universal_blocks', [])}`。Category-specific：`{selection.get('category_specific_blocks', {})}`。类别曲线见 `plots/category_block_response_curves.png`。
 
+Held-out 候选组合各类别增益为 `{joint.get('candidate_category_semantic_gain', {})}`；正向类别数为 `{joint.get('positive_category_count', '未运行')}` / `{joint.get('required_positive_category_count', config['statistics']['universal_positive_categories'])}`。
+
 ### 4. 文本增强最有效的 alpha 范围是什么？
 
 在 `[1.1, 1.25, 1.5, 1.75, 2.0]` 中、通过保持与坏图门槛后选择的公共 alpha 为 `{alpha.get('alpha', '未通过门槛或 NO-GO 不适用')}`。完整结果见 `alpha_summary.csv`；NO-GO 时不会凭 alpha 扫描强行制造候选。
@@ -195,7 +198,7 @@ TexTailor 编号只在候选锁定后作为对照使用。候选组合相对其�
 
 ### 7. 哪些 Block 适合作为编辑强度控制安装位置？
 
-只有 `{candidates}` 可进入安装候选；仍须以 `joint_validation.json` 的状态为最终约束。当前联合状态为 `{joint.get('status', '未运行')}`。
+最终可安装候选为 `{installable_candidates}`。Discovery 候选 `{candidates}` 只有在精确 held-out 联合状态为 `validated` 时才会进入安装建议；当前联合状态为 `{joint.get('status', '未运行')}`。
 
 ### 8. 哪些 Block 影响语义但会严重破坏源图，应排除？
 

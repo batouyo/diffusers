@@ -7,7 +7,7 @@ import pytest
 import torch
 
 from probe_flux_kontext_blocks import file_sha256
-from scripts.aggregate_joint import load_joint, validate_joint_pairing
+from scripts.aggregate_joint import load_joint, passes_joint_gates, validate_joint_pairing
 from scripts.run_joint_validation import arms, joint_hash, random_controls
 
 
@@ -107,3 +107,31 @@ def test_joint_pairing_rejects_latent_mismatch():
     )
     with pytest.raises(RuntimeError, match="latent_hash mismatch"):
         validate_joint_pairing(frame)
+
+
+def test_joint_success_requires_preregistered_positive_category_count():
+    config = {
+        "probing": {"random_control_sets": 20},
+        "inference": {"seeds": [42, 1234, 2025]},
+        "statistics": {
+            "dino_noninferiority_margin": -0.02,
+            "bad_image_rate_max": 0.01,
+            "universal_positive_categories": 6,
+        },
+    }
+    common = dict(
+        empirical_p=1 / 21,
+        comparisons={"all_blocks": {"ci_low": 0.01}},
+        preservation_ci_low=-0.01,
+        bad_image_rate=0.0,
+        seed_means={"42": 0.1, "1234": 0.1, "2025": 0.1},
+        config=config,
+    )
+    assert passes_joint_gates(
+        **common,
+        category_means={f"category-{index}": (0.1 if index < 6 else -0.1) for index in range(8)},
+    )
+    assert not passes_joint_gates(
+        **common,
+        category_means={f"category-{index}": (0.1 if index < 5 else -0.1) for index in range(8)},
+    )

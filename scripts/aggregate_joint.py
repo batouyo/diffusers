@@ -111,6 +111,28 @@ def paired_difference(frame: pd.DataFrame, left_arm: str, right_arm: str, config
     return {"mean": cluster_macro(paired, "difference"), "ci_low": low, "ci_high": high, "n": len(paired)}
 
 
+def passes_joint_gates(
+    empirical_p: float,
+    comparisons: dict,
+    preservation_ci_low: float,
+    bad_image_rate: float,
+    seed_means: dict[str, float],
+    category_means: dict[str, float],
+    config: dict,
+) -> bool:
+    return bool(
+        empirical_p <= 1 / (config["probing"]["random_control_sets"] + 1)
+        and comparisons
+        and all(value["ci_low"] > 0 for value in comparisons.values())
+        and preservation_ci_low >= config["statistics"]["dino_noninferiority_margin"]
+        and bad_image_rate <= config["statistics"]["bad_image_rate_max"]
+        and len(seed_means) == len(config["inference"]["seeds"])
+        and all(value > 0 for value in seed_means.values())
+        and sum(value > 0 for value in category_means.values())
+        >= config["statistics"]["universal_positive_categories"]
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default="probe_config.yaml")
@@ -302,12 +324,15 @@ def main() -> None:
     all_seed_means_positive = len(candidate_seed_means) == len(config["inference"]["seeds"]) and all(
         value > 0 for value in candidate_seed_means.values()
     )
-    success = bool(
-        empirical_p <= 1 / (config["probing"]["random_control_sets"] + 1)
-        and all(value["ci_low"] > 0 for value in comparisons.values())
-        and candidate["preservation_ci_low"] >= config["statistics"]["dino_noninferiority_margin"]
-        and candidate["bad_image_rate"] <= config["statistics"]["bad_image_rate_max"]
-        and all_seed_means_positive
+    positive_category_count = sum(value > 0 for value in candidate_category_means.values())
+    success = passes_joint_gates(
+        empirical_p,
+        comparisons,
+        float(candidate["preservation_ci_low"]),
+        float(candidate["bad_image_rate"]),
+        candidate_seed_means,
+        candidate_category_means,
+        config,
     )
     result = {
         "execution_status": "complete",
@@ -328,7 +353,8 @@ def main() -> None:
         "candidate_seed_semantic_gain": candidate_seed_means,
         "all_seed_means_positive": all_seed_means_positive,
         "candidate_category_semantic_gain": candidate_category_means,
-        "positive_category_count": sum(value > 0 for value in candidate_category_means.values()),
+        "positive_category_count": positive_category_count,
+        "required_positive_category_count": int(config["statistics"]["universal_positive_categories"]),
     }
     (run_root / "joint_validation.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
     plot = summary[
