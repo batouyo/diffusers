@@ -45,6 +45,26 @@ def resolve_snapshot(path: str | Path) -> str:
     return str(usable[-1])
 
 
+def file_sha256(path: str | Path) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(4 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def evaluation_hash(config: dict) -> str:
+    value = {
+        "source_sha256": file_sha256(__file__),
+        "rubric": RUBRIC,
+        "qwen_model": resolve_snapshot(config["evaluation"]["qwen_model"]),
+        "dino_model": resolve_snapshot(config["evaluation"]["dino_model"]),
+        "max_new_tokens": config["evaluation"]["vlm_max_new_tokens"],
+        "lpips": "alex-v0.1",
+    }
+    return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
+
+
 def atomic_json(path: Path, value: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, temp = tempfile.mkstemp(prefix=path.name, suffix=".tmp", dir=path.parent)
@@ -160,6 +180,26 @@ class DinoPreservation:
         return float((source * output).sum().cpu())
 
 
+class LpipsDistance:
+    def __init__(self, device: str):
+        import lpips
+
+        self.model = lpips.LPIPS(net="alex", version="0.1", verbose=False).to(device)
+        self.model.eval()
+        self.device = device
+
+    def _tensor(self, path: str) -> torch.Tensor:
+        with Image.open(path) as image:
+            image = ImageOps.exif_transpose(image).convert("RGB").resize((512, 512), Image.Resampling.LANCZOS)
+            array = np.asarray(image, dtype=np.float32) / 127.5 - 1.0
+        return torch.from_numpy(array).permute(2, 0, 1).unsqueeze(0).to(self.device)
+
+    def distance(self, source_path: str, output_path: str) -> float:
+        with torch.inference_mode():
+            value = self.model(self._tensor(source_path), self._tensor(output_path))
+        return float(value.squeeze().cpu())
+
+
 def quality_flags(path: str) -> dict:
     with Image.open(path) as image:
         array = np.asarray(image.convert("RGB"), dtype=np.float32) / 255.0
@@ -217,6 +257,8 @@ def main() -> None:
         config["evaluation"]["qwen_model"], args.device, config["evaluation"]["vlm_max_new_tokens"]
     )
     dino = DinoPreservation(config["evaluation"]["dino_model"], args.device)
+    lpips_metric = LpipsDistance(args.device)
+    evaluator_hash = evaluation_hash(config)
     metadata = list(iter_metadata(run_root))
     if args.max_items is not None:
         metadata = metadata[: args.max_items]
@@ -225,7 +267,10 @@ def main() -> None:
         if eval_path.exists():
             try:
                 prior = json.loads(eval_path.read_text(encoding="utf-8"))
-                if prior.get("output_sha256") == meta.get("output_sha256"):
+                if (
+                    prior.get("output_sha256") == meta.get("output_sha256")
+                    and prior.get("evaluation_hash") == evaluator_hash
+                ):
                     continue
             except Exception:
                 pass
@@ -237,6 +282,8 @@ def main() -> None:
             "quality": quality_flags(meta["output_path"]),
             "dino_similarity": dino.similarity(row["image"], meta["output_path"]),
             "dino_model": dino.model_path,
+            "lpips_distance": lpips_metric.distance(row["image"], meta["output_path"]),
+            "evaluation_hash": evaluator_hash,
         }
         if judge is not None:
             try:
