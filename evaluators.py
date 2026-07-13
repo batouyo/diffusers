@@ -229,15 +229,18 @@ def load_dataset(path: str) -> dict[str, dict]:
 
 
 def iter_metadata(run_root: Path):
-    for path in sorted((run_root / "images").rglob("*.json")):
-        if path.name.endswith(".eval.json"):
+    for artifact_root in [run_root / "images", run_root / "joint"]:
+        if not artifact_root.exists():
             continue
-        try:
-            value = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            continue
-        if value.get("status") == "complete" and value.get("output_path"):
-            yield path, value
+        for path in sorted(artifact_root.rglob("*.json")):
+            if path.name.endswith(".eval.json"):
+                continue
+            try:
+                value = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if value.get("status") == "complete" and value.get("output_path"):
+                yield path, value
 
 
 def main() -> None:
