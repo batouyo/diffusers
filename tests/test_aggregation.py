@@ -124,3 +124,52 @@ def test_benjamini_hochberg_is_monotone_and_preserves_missing() -> None:
     assert np.isclose(adjusted.loc[11], 0.04)
     assert np.isclose(adjusted.loc[12], 0.04)
     assert np.isnan(adjusted.loc[13])
+
+
+def test_stage2_is_strict_global_ranking_not_category_order_injection() -> None:
+    summary = pd.DataFrame(
+        [
+            {
+                "global_block_index": index,
+                "semantic_gain": 1.0 - index / 100,
+                "semantic_gain_ci_low": 0.9 - index / 100,
+                "semantic_gain_q_bh": 1.0,
+                "semantic_drop": np.nan,
+                "semantic_drop_ci_low": np.nan,
+                "semantic_drop_q_bh": np.nan,
+                "preservation_cost_ci_high": 0.0,
+                "bad_image_rate": 0.0,
+                "positive_categories": 0,
+                "positive_sample_rate": 0.0,
+                "all_seed_means_positive": False,
+                "category_gain_json": '{"late_category": 99.0}' if index == 15 else "{}",
+            }
+            for index in range(16)
+        ]
+    )
+    frame = pd.DataFrame(
+        columns=["mode", "alpha", "global_block_index", "category", "sample_id", "seed", "semantic_gain"]
+    )
+    config = {
+        "inference": {"alpha": 1.5, "seeds": [42, 1234, 2025]},
+        "dataset": {"categories": ["late_category"]},
+        "probing": {"stage2_blocks": 15, "max_candidates": 8},
+        "statistics": {
+            "bootstrap_samples": 20,
+            "random_seed": 7,
+            "universal_gain_min": 2.0,
+            "universal_drop_min": 2.0,
+            "universal_positive_categories": 1,
+            "universal_positive_sample_rate": 0.6,
+            "category_gain_min": 2.0,
+            "category_positive_sample_rate": 0.6,
+            "bad_image_rate_max": 0.01,
+            "dino_noninferiority_margin": -0.02,
+            "adjacent_distance": 2,
+            "redundancy_spearman": 0.9,
+            "bh_q": 0.05,
+        },
+    }
+    selected = select_candidates(summary, frame, config)
+    assert selected["stage2_blocks"] == list(range(15))
+    assert 15 not in selected["stage2_blocks"]

@@ -250,26 +250,10 @@ def select_candidates(summary: pd.DataFrame, frame: pd.DataFrame, config: dict) 
             "category_specific_blocks": [],
         }
     ranked = summary.sort_values(["semantic_gain_ci_low", "semantic_gain"], ascending=False)
-    stage2 = [int(value) for value in ranked.head(10)["global_block_index"]]
-    category_matrix = {}
-    for _, row in summary.iterrows():
-        try:
-            category_matrix[int(row["global_block_index"])] = json.loads(row["category_gain_json"])
-        except Exception:
-            category_matrix[int(row["global_block_index"])] = {}
-    categories = config["dataset"]["categories"]
-    for category in categories:
-        candidates = sorted(
-            category_matrix,
-            key=lambda index: category_matrix[index].get(category, float("-inf")),
-            reverse=True,
-        )
-        for candidate in candidates:
-            if candidate not in stage2:
-                stage2.append(candidate)
-                break
-        if len(stage2) >= config["probing"]["stage2_blocks"]:
-            break
+    stage2 = [
+        int(value)
+        for value in ranked.head(int(config["probing"]["stage2_blocks"]))["global_block_index"]
+    ]
     preserve_limit = -float(stats["dino_noninferiority_margin"])
     eligible = summary[
         (summary["semantic_gain"] >= stats["universal_gain_min"])
