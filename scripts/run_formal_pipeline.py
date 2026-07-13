@@ -85,7 +85,21 @@ def main() -> None:
     candidates = [int(value) for value in selection.get("selected_global_blocks", [])]
     if not candidates:
         (run_root / "FORMAL_NO_GO.json").write_text(
-            json.dumps({"reason": "no block passed preregistered gain/drop/preservation gates"}, indent=2),
+            json.dumps(
+                {
+                    "status": "validated_no_go",
+                    "reason": "no block passed preregistered gain/drop/preservation gates",
+                    "selection_status": selection.get("status"),
+                    "selected_global_blocks": [],
+                    "universal_blocks": selection.get("universal_blocks", []),
+                    "category_specific_blocks": selection.get("category_specific_blocks", {}),
+                    "evaluated_stage2_blocks": stage2,
+                    "evaluated_stage3_blocks": stage3,
+                    "preregistered_alpha": config["inference"]["alpha"],
+                    "policy": "do not force a top-k candidate when no block clears all gates",
+                },
+                indent=2,
+            ),
             encoding="utf-8",
         )
         command("scripts/make_final_report.py")

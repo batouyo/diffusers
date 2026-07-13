@@ -33,6 +33,7 @@ def main() -> None:
     selection = load_json(run_root / "selected_blocks.json", {})
     alpha = load_json(run_root / "selected_alpha.json", {})
     joint = load_json(run_root / "joint_validation.json", {})
+    no_go = load_json(run_root / "FORMAL_NO_GO.json", {})
     calibration = load_json(run_root / "calibration" / "calibration_report.json", {})
     summary = pd.read_csv(run_root / "block_summary.csv") if (run_root / "block_summary.csv").exists() else pd.DataFrame()
     candidates = [int(value) for value in selection.get("selected_global_blocks", [])]
@@ -61,7 +62,18 @@ def main() -> None:
         ]
     comparisons = joint.get("comparisons", {})
     commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
-    status = "VALIDATED" if joint.get("status") == "validated" and calibration.get("gate_pass") else "NOT VALIDATED"
+    validated_no_go = (
+        not candidates
+        and selection.get("status") == "no_go"
+        and no_go.get("status") == "validated_no_go"
+        and calibration.get("gate_pass")
+    )
+    if joint.get("status") == "validated" and calibration.get("gate_pass"):
+        status = "VALIDATED CANDIDATE SET"
+    elif validated_no_go:
+        status = "VALIDATED NO-GO"
+    else:
+        status = "NOT VALIDATED"
     final = f"""# FLUX.1-Kontext-dev Text Block Probing — Final Report
 
 ## Executive status
@@ -94,9 +106,11 @@ Universal：`{selection.get('universal_blocks', [])}`。Category-specific：`{se
 
 ### 4. 文本增强最有效的 alpha 范围是什么？
 
-在 `[1.1, 1.25, 1.5, 1.75, 2.0]` 中、通过保持与坏图门槛后选择的公共 alpha 为 `{alpha.get('alpha', '未通过门槛')}`。完整结果见 `alpha_summary.csv`。
+在 `[1.1, 1.25, 1.5, 1.75, 2.0]` 中、通过保持与坏图门槛后选择的公共 alpha 为 `{alpha.get('alpha', '未通过门槛或 NO-GO 不适用')}`。完整结果见 `alpha_summary.csv`；NO-GO 时不会凭 alpha 扫描强行制造候选。
 
 ### 5. 增强这些 Block 是否比增强全部 Block 更有效？
+
+若状态为 VALIDATED NO-GO，本问题不适用，且不会伪造联合比较。
 
 - 标准 all-block：{verdict(comparisons.get('all_blocks'))}
 - 预算匹配 all-block：{verdict(comparisons.get('all_blocks_budget_matched'))}
@@ -104,7 +118,7 @@ Universal：`{selection.get('universal_blocks', [])}`。Category-specific：`{se
 
 ### 6. FLUX.1-Dev 的 TexTailor Block 能否迁移？
 
-TexTailor 编号只在候选锁定后作为对照使用。候选组合相对其结果：{verdict(comparisons.get('textailor_flux1dev_control'))}
+TexTailor 编号只在候选锁定后作为对照使用。候选组合相对其结果：{verdict(comparisons.get('textailor_flux1dev_control'))} 若本实验为 NO-GO，则迁移比较不适用。
 
 ### 7. 哪些 Block 适合作为编辑强度控制安装位置？
 
@@ -124,11 +138,18 @@ TexTailor 编号只在候选锁定后作为对照使用。候选组合相对其�
 {json.dumps(joint, ensure_ascii=False, indent=2)}
 ```
 
+## Preregistered no-go evidence
+
+```json
+{json.dumps(no_go, ensure_ascii=False, indent=2)}
+```
+
 ## Evidence
 
 - `raw_metrics.csv`, `block_summary.csv`, `alpha_summary.csv`
-- `selected_blocks.json`, `joint_metrics.csv`, `joint_summary.csv`, `joint_validation.json`
-- `plots/` and `plots/image_grids/`
+- `selected_blocks.json` and, when candidates exist, `joint_metrics.csv`, `joint_summary.csv`, `joint_validation.json`
+- `FORMAL_NO_GO.json` when no candidate clears the preregistered gates
+- `plots/` and, when candidates exist, `plots/image_grids/`
 - `calibration/` and `completion_audit.json`
 """
     (run_root / "FINAL_REPORT.md").write_text(final, encoding="utf-8")

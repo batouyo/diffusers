@@ -48,16 +48,35 @@ def main() -> None:
         "tests/test_interventions.py",
     ]
     required_outputs = ["raw_metrics.csv", "block_summary.csv", "selected_blocks.json"]
-    required_plots = [
+    core_plots = [
         "semantic_gain_vs_global_block.png",
         "semantic_drop_vs_global_block.png",
         "preservation_cost_vs_global_block.png",
         "category_block_response_curves.png",
         "alpha_sensitivity_curves.png",
-        "candidate_vs_random_and_all.png",
     ]
     total_blocks = int(structure.get("total_block_count", 0))
     expected_discovery = 8 * config["dataset"]["discovery_per_category"] * len(config["inference"]["seeds"])
+    selection_path = run_root / "selected_blocks.json"
+    selection = json.loads(selection_path.read_text(encoding="utf-8")) if selection_path.exists() else {}
+    candidates = selection.get("selected_global_blocks", [])
+    no_go_path = run_root / "FORMAL_NO_GO.json"
+    no_go = json.loads(no_go_path.read_text(encoding="utf-8")) if no_go_path.exists() else {}
+    formal_counts_complete = (
+        mode_counts["baseline"] >= expected_discovery
+        and mode_counts["enhance_text"] >= expected_discovery * total_blocks
+        and mode_counts["disable_text"] >= expected_discovery * config["probing"]["stage2_blocks"]
+        and mode_counts["remove_block"] >= expected_discovery * config["probing"]["stage3_blocks"]
+    )
+    validated_no_go = (
+        formal_counts_complete
+        and selection.get("status") == "no_go"
+        and candidates == []
+        and no_go.get("status") == "validated_no_go"
+        and no_go.get("selected_global_blocks") == []
+    )
+    required_plots = core_plots + ([] if validated_no_go else ["candidate_vs_random_and_all.png"])
+    joint_or_no_go = (run_root / "joint_validation.json").exists() or validated_no_go
     checks = [
         check("independent required source files", all((ROOT / path).exists() for path in required_code), required_code),
         check("runtime structure report", total_blocks > 0 and len(structure.get("blocks", [])) == total_blocks, structure_path),
@@ -95,7 +114,11 @@ def main() -> None:
         ),
         check("all generated outputs evaluated", bool(metadata) and eval_count >= len(metadata), {"generated": len(metadata), "evaluated": eval_count}),
         check("required metric tables", all((run_root / path).exists() for path in required_outputs), required_outputs),
-        check("required plots", all((run_root / "plots" / path).exists() for path in required_plots), required_plots),
+        check(
+            "required plots (candidate comparison conditional on non-empty selection)",
+            all((run_root / "plots" / path).exists() for path in required_plots),
+            {"required": required_plots, "validated_no_go": validated_no_go},
+        ),
         check("80-example calibration bundle", (run_root / "calibration" / "blinded_labels.csv").exists(), run_root / "calibration"),
         check(
             "human calibration gate",
@@ -103,7 +126,11 @@ def main() -> None:
             and json.loads((run_root / "calibration" / "calibration_report.json").read_text(encoding="utf-8")).get("gate_pass", False),
             run_root / "calibration" / "calibration_report.json",
         ),
-        check("joint heldout validation", (run_root / "joint_validation.json").exists(), run_root / "joint_validation.json"),
+        check(
+            "joint heldout validation or preregistered no-go",
+            joint_or_no_go,
+            {"joint": run_root / "joint_validation.json", "no_go": no_go_path, "validated_no_go": validated_no_go},
+        ),
         check("final report", (run_root / "FINAL_REPORT.md").exists(), run_root / "FINAL_REPORT.md"),
     ]
     required = [item for item in checks if item["required"]]
