@@ -14,6 +14,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from expected_counts import load_counts
+from evaluators import evaluation_hash, reusable_evaluation
+from probe_flux_kontext_blocks import (
+    experiment_hash,
+    generate_jobs,
+    job_output_paths,
+    load_config,
+    load_dataset,
+)
 from verify_pilot_complete import sentinel_current
 from verify_pilot_followup import sentinel_current as followup_sentinel_current
 from verify_alpha_scan import sentinel_current as alpha_sentinel_current
@@ -44,9 +52,44 @@ def session_exists(name: str) -> bool:
     ).returncode == 0
 
 
-def count(pattern: str) -> int:
-    root = RUN_ROOT / "images"
-    return sum(1 for _ in root.rglob(pattern)) if root.exists() else 0
+def pilot_progress() -> tuple[int, int]:
+    """Count only exact hash-current Stage-1 pilot generation/evaluation jobs."""
+    config = load_config(ROOT / "probe_config.yaml")
+    output_root = Path(config["project"]["output_root"])
+    structure = json.loads((output_root / "preflight" / "structure_report.json").read_text(encoding="utf-8"))
+    dataset = load_dataset(config["project"]["dataset_manifest"])
+    jobs = generate_jobs(
+        config,
+        dataset,
+        "pilot",
+        list(range(int(structure["total_block_count"]))),
+        "discovery",
+    )
+    generation_hash = experiment_hash(config)
+    evaluator_hash = evaluation_hash(config)
+    generated = 0
+    evaluated = 0
+    for job in jobs:
+        image_path, meta_path = job_output_paths(config, job)
+        if not image_path.exists() or not meta_path.exists():
+            continue
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if meta.get("status") != "complete" or meta.get("config_hash") != generation_hash:
+            continue
+        generated += 1
+        eval_path = meta_path.with_suffix(".eval.json")
+        if not eval_path.exists():
+            continue
+        try:
+            evaluation = json.loads(eval_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if reusable_evaluation(evaluation, meta, evaluator_hash, require_vlm=True):
+            evaluated += 1
+    return generated, evaluated
 
 
 def start_session(name: str, command: str) -> None:
@@ -94,8 +137,7 @@ def main() -> None:
     pilot_expected = load_counts(ROOT)["pilot_stage1_jobs"]
     log("watchdog active; fixed GPU selection remains inside stage scripts")
     while True:
-        png_count = count("*.png")
-        eval_count = count("*.eval.json")
+        png_count, eval_count = pilot_progress()
         pilot = session_exists("flux_probe_pilot")
         followup = session_exists("flux_probe_followup")
         alpha = session_exists("flux_probe_alpha")
