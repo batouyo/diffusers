@@ -77,7 +77,9 @@ def main() -> None:
     required_outputs = ["raw_metrics.csv", "block_summary.csv", "stream_summary.csv", "selected_blocks.json"]
     required_block_columns = {
         "semantic_gain",
+        "semantic_gain_q_bh",
         "semantic_drop",
+        "semantic_drop_q_bh",
         "removal_edit_drop",
         "preservation_cost",
         "removal_preservation_cost",
@@ -148,7 +150,7 @@ def main() -> None:
             "independent required source files and commit-bound tests",
             all((ROOT / path).exists() for path in required_code)
             and test_report.get("status") == "pass"
-            and int(test_report.get("passed_tests") or 0) >= 19
+            and int(test_report.get("passed_tests") or 0) >= 20
             and test_report.get("git_commit") == current_commit,
             {
                 "required_code": required_code,

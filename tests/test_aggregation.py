@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from aggregate_results import paired_metrics, select_candidates
+from aggregate_results import benjamini_hochberg, paired_metrics, select_candidates
 
 
 def test_paired_metrics_include_disable_and_remove_effects() -> None:
@@ -31,8 +31,10 @@ def test_candidate_selection_enforces_preservation_and_correlated_adjacency_dedu
                 "global_block_index": 0,
                 "semantic_gain": 0.12,
                 "semantic_gain_ci_low": 0.06,
+                "semantic_gain_q_bh": 0.01,
                 "semantic_drop": 0.10,
                 "semantic_drop_ci_low": 0.04,
+                "semantic_drop_q_bh": 0.01,
                 "preservation_cost_ci_high": 0.015,
                 "bad_image_rate": 0.0,
                 "positive_categories": 1,
@@ -44,8 +46,10 @@ def test_candidate_selection_enforces_preservation_and_correlated_adjacency_dedu
                 "global_block_index": 1,
                 "semantic_gain": 0.11,
                 "semantic_gain_ci_low": 0.05,
+                "semantic_gain_q_bh": 0.01,
                 "semantic_drop": 0.09,
                 "semantic_drop_ci_low": 0.03,
+                "semantic_drop_q_bh": 0.01,
                 "preservation_cost_ci_high": 0.014,
                 "bad_image_rate": 0.0,
                 "positive_categories": 1,
@@ -57,8 +61,10 @@ def test_candidate_selection_enforces_preservation_and_correlated_adjacency_dedu
                 "global_block_index": 4,
                 "semantic_gain": 0.20,
                 "semantic_gain_ci_low": 0.08,
+                "semantic_gain_q_bh": 0.01,
                 "semantic_drop": 0.12,
                 "semantic_drop_ci_low": 0.05,
+                "semantic_drop_q_bh": 0.01,
                 "preservation_cost_ci_high": 0.08,
                 "bad_image_rate": 0.0,
                 "positive_categories": 1,
@@ -100,6 +106,7 @@ def test_candidate_selection_enforces_preservation_and_correlated_adjacency_dedu
             "dino_noninferiority_margin": -0.02,
             "adjacent_distance": 2,
             "redundancy_spearman": 0.9,
+            "bh_q": 0.05,
         },
     }
     selected = select_candidates(summary, pd.DataFrame(rows), config)
@@ -107,3 +114,12 @@ def test_candidate_selection_enforces_preservation_and_correlated_adjacency_dedu
     assert selected["selected_global_blocks"] == [0]
     assert 4 not in selected["selected_global_blocks"]
     assert selected["preservation_cost_limit"] == 0.02
+
+
+def test_benjamini_hochberg_is_monotone_and_preserves_missing() -> None:
+    values = pd.Series([0.01, 0.04, 0.03, np.nan], index=[10, 11, 12, 13])
+    adjusted = benjamini_hochberg(values)
+    assert np.isclose(adjusted.loc[10], 0.03)
+    assert np.isclose(adjusted.loc[11], 0.04)
+    assert np.isclose(adjusted.loc[12], 0.04)
+    assert np.isnan(adjusted.loc[13])

@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 import yaml
+from scipy.stats import wilcoxon
 
 
 def read_records(run_root: Path) -> pd.DataFrame:
@@ -104,6 +105,36 @@ def stratified_bootstrap(values: pd.DataFrame, column: str, draws: int, seed: in
     return tuple(np.quantile(estimates, [0.025, 0.975]).tolist())
 
 
+def one_sided_paired_p(values: pd.DataFrame, column: str) -> float:
+    """One-sided paired Wilcoxon p-value after averaging repeated seeds per sample."""
+    available = values.dropna(subset=[column])
+    if available.empty:
+        return float("nan")
+    per_sample = available.groupby(["category", "sample_id"])[column].mean().to_numpy()
+    if not len(per_sample) or np.allclose(per_sample, 0):
+        return 1.0
+    try:
+        return float(wilcoxon(per_sample, alternative="greater", zero_method="zsplit").pvalue)
+    except ValueError:
+        return float("nan")
+
+
+def benjamini_hochberg(values: pd.Series) -> pd.Series:
+    """Return monotone BH-adjusted q-values while preserving missing entries."""
+    result = pd.Series(np.nan, index=values.index, dtype=float)
+    available = values.dropna().astype(float)
+    if available.empty:
+        return result
+    order = np.argsort(available.to_numpy())
+    ordered = available.to_numpy()[order]
+    adjusted = ordered * len(ordered) / np.arange(1, len(ordered) + 1)
+    adjusted = np.minimum.accumulate(adjusted[::-1])[::-1]
+    adjusted = np.clip(adjusted, 0, 1)
+    ordered_indices = available.index.to_numpy()[order]
+    result.loc[ordered_indices] = adjusted
+    return result
+
+
 def summarize_blocks(frame: pd.DataFrame, config: dict) -> pd.DataFrame:
     stats = config["statistics"]
     summaries = []
@@ -140,6 +171,8 @@ def summarize_blocks(frame: pd.DataFrame, config: dict) -> pd.DataFrame:
             stats["bootstrap_samples"],
             stats["random_seed"] + 4000 + int(global_index),
         )
+        gain_p = one_sided_paired_p(enhance, "semantic_gain")
+        drop_p = one_sided_paired_p(disable, "semantic_drop")
         category_gain = (
             enhance.groupby(["category", "sample_id"])["semantic_gain"].mean().groupby("category").mean().to_dict()
         )
@@ -171,9 +204,11 @@ def summarize_blocks(frame: pd.DataFrame, config: dict) -> pd.DataFrame:
                 "semantic_gain": gain,
                 "semantic_gain_ci_low": gain_lo,
                 "semantic_gain_ci_high": gain_hi,
+                "semantic_gain_p_one_sided": gain_p,
                 "semantic_drop": drop,
                 "semantic_drop_ci_low": drop_lo,
                 "semantic_drop_ci_high": drop_hi,
+                "semantic_drop_p_one_sided": drop_p,
                 "removal_edit_drop": removal_drop,
                 "removal_edit_drop_ci_low": removal_drop_lo,
                 "removal_edit_drop_ci_high": removal_drop_hi,
@@ -199,7 +234,10 @@ def summarize_blocks(frame: pd.DataFrame, config: dict) -> pd.DataFrame:
                 "category_gain_json": json.dumps(category_gain, sort_keys=True),
             }
         )
-    return pd.DataFrame(summaries).sort_values("global_block_index")
+    result = pd.DataFrame(summaries).sort_values("global_block_index")
+    result["semantic_gain_q_bh"] = benjamini_hochberg(result["semantic_gain_p_one_sided"])
+    result["semantic_drop_q_bh"] = benjamini_hochberg(result["semantic_drop_p_one_sided"])
+    return result
 
 
 def select_candidates(summary: pd.DataFrame, frame: pd.DataFrame, config: dict) -> dict:
@@ -236,11 +274,13 @@ def select_candidates(summary: pd.DataFrame, frame: pd.DataFrame, config: dict) 
     eligible = summary[
         (summary["semantic_gain"] >= stats["universal_gain_min"])
         & (summary["semantic_gain_ci_low"] > 0)
+        & (summary["semantic_gain_q_bh"] <= stats["bh_q"])
         & (summary["positive_categories"] >= stats["universal_positive_categories"])
         & (summary["positive_sample_rate"] >= stats["universal_positive_sample_rate"])
         & summary["all_seed_means_positive"]
         & (summary["semantic_drop"] >= stats["universal_drop_min"])
         & (summary["semantic_drop_ci_low"] > 0)
+        & (summary["semantic_drop_q_bh"] <= stats["bh_q"])
         & (summary["preservation_cost_ci_high"] <= preserve_limit)
         & (summary["bad_image_rate"] <= stats["bad_image_rate_max"])
     ].copy()
@@ -293,6 +333,8 @@ def select_candidates(summary: pd.DataFrame, frame: pd.DataFrame, config: dict) 
         per_seed = group.groupby("seed")["semantic_gain"].mean().dropna()
         safe = (
             block_row["semantic_drop_ci_low"] > 0
+            and block_row["semantic_gain_q_bh"] <= stats["bh_q"]
+            and block_row["semantic_drop_q_bh"] <= stats["bh_q"]
             and block_row["preservation_cost_ci_high"] <= preserve_limit
             and block_row["bad_image_rate"] <= stats["bad_image_rate_max"]
         )
