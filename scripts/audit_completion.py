@@ -94,7 +94,16 @@ def main() -> None:
         and no_go.get("selected_global_blocks") == []
     )
     required_plots = core_plots + ([] if validated_no_go else ["candidate_vs_random_and_all.png"])
-    joint_or_no_go = (run_root / "joint_validation.json").exists() or validated_no_go
+    joint_path = run_root / "joint_validation.json"
+    joint = json.loads(joint_path.read_text(encoding="utf-8")) if joint_path.exists() else {}
+    valid_joint = (
+        joint.get("execution_status") == "complete"
+        and joint.get("expected_total", 0) > 0
+        and joint.get("evaluated_total") == joint.get("expected_total")
+        and joint.get("arm_counts")
+        and all(count == joint.get("expected_per_arm") for count in joint["arm_counts"].values())
+    )
+    joint_or_no_go = valid_joint or validated_no_go
     checks = [
         check("independent required source files", all((ROOT / path).exists() for path in required_code), required_code),
         check("runtime structure report", total_blocks > 0 and len(structure.get("blocks", [])) == total_blocks, structure_path),
@@ -155,7 +164,15 @@ def main() -> None:
         check(
             "joint heldout validation or preregistered no-go",
             joint_or_no_go,
-            {"joint": run_root / "joint_validation.json", "no_go": no_go_path, "validated_no_go": validated_no_go},
+            {
+                "joint": joint_path,
+                "valid_joint_execution": valid_joint,
+                "joint_status": joint.get("status"),
+                "evaluated_total": joint.get("evaluated_total"),
+                "expected_total": joint.get("expected_total"),
+                "no_go": no_go_path,
+                "validated_no_go": validated_no_go,
+            },
         ),
         check("final report", (run_root / "FINAL_REPORT.md").exists(), run_root / "FINAL_REPORT.md"),
     ]

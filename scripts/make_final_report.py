@@ -90,8 +90,10 @@ def main() -> None:
         and no_go.get("status") == "validated_no_go"
         and calibration.get("gate_pass")
     )
-    if joint.get("status") == "validated" and calibration.get("gate_pass"):
+    if joint.get("execution_status") == "complete" and joint.get("status") == "validated" and calibration.get("gate_pass"):
         status = "VALIDATED CANDIDATE SET"
+    elif joint.get("execution_status") == "complete" and calibration.get("gate_pass"):
+        status = "VALIDATED NEGATIVE JOINT RESULT"
     elif validated_no_go:
         status = "VALIDATED NO-GO"
     else:
@@ -169,7 +171,7 @@ TexTailor 编号只在候选锁定后作为对照使用。候选组合相对其�
 ## Evidence
 
 - `raw_metrics.csv`, `block_summary.csv`, `stream_summary.csv`, `alpha_summary.csv`
-- `selected_blocks.json` and, when candidates exist, `joint_metrics.csv`, `joint_summary.csv`, `joint_validation.json`
+- `selected_blocks.json` and, when candidates exist, `joint_metrics.csv`, `joint_summary.csv`, `joint_category_summary.csv`, `joint_seed_summary.csv`, `joint_validation.json`
 - `FORMAL_NO_GO.json` when no candidate clears the preregistered gates
 - `plots/` and, when candidates exist, `plots/image_grids/`
 - `calibration/` and `completion_audit.json`
