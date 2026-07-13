@@ -41,6 +41,55 @@ def row_identity_hash(row: dict) -> str:
     ).hexdigest()
 
 
+def bundle_current(root: Path = ROOT) -> bool:
+    try:
+        config = yaml.safe_load((root / "probe_config.yaml").read_text(encoding="utf-8"))
+        run_root = Path(config["project"]["output_root"]) / config["project"]["run_id"]
+        calibration = run_root / "calibration"
+        manifest = json.loads((calibration / "bundle_manifest.json").read_text(encoding="utf-8"))
+        with (calibration / "blinded_labels.csv").open("r", encoding="utf-8-sig", newline="") as handle:
+            label_rows = list(csv.DictReader(handle))
+        sealed = json.loads((calibration / "sealed_key.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError):
+        return False
+    required_files = [
+        calibration / "metadata_manifest.txt",
+        calibration / "metadata_selection_key.json",
+        calibration / "blinded_calibration_bundle.zip",
+    ]
+    if not all(path.is_file() for path in required_files):
+        return False
+    if not (
+        manifest.get("status") == "complete"
+        and manifest.get("protocol_version") == PROTOCOL_VERSION
+        and manifest.get("bundle_protocol_hash") == file_sha256(__file__)
+        and manifest.get("generation_hash") == experiment_hash(config)
+        and manifest.get("evaluation_hash") == evaluation_hash(config)
+        and manifest.get("metadata_manifest_sha256") == file_sha256(calibration / "metadata_manifest.txt")
+        and manifest.get("selection_key_sha256") == file_sha256(calibration / "metadata_selection_key.json")
+        and manifest.get("archive_sha256") == file_sha256(calibration / "blinded_calibration_bundle.zip")
+        and len(label_rows) == manifest.get("examples") == 80
+        and len({row.get("calibration_id") for row in label_rows}) == 80
+        and set(manifest.get("rows", {})) == set(sealed) == {row.get("calibration_id") for row in label_rows}
+    ):
+        return False
+    for row in label_rows:
+        calibration_id = row["calibration_id"]
+        expected = manifest["rows"][calibration_id]
+        source_path = calibration / row["source_image"]
+        output_path = calibration / row["output_image"]
+        if (
+            row_identity_hash(row) != expected.get("immutable_row_sha256")
+            or not source_path.is_file()
+            or not output_path.is_file()
+            or file_sha256(source_path) != expected.get("source_sha256")
+            or file_sha256(output_path) != expected.get("output_sha256")
+            or sealed[calibration_id].get("output_sha256") != expected.get("output_sha256")
+        ):
+            return False
+    return True
+
+
 def main() -> None:
     config = yaml.safe_load((ROOT / "probe_config.yaml").read_text(encoding="utf-8"))
     dataset = {
@@ -243,6 +292,7 @@ update();
     bundle_manifest = {
         "status": "complete",
         "protocol_version": PROTOCOL_VERSION,
+        "bundle_protocol_hash": file_sha256(__file__),
         "examples": len(blinded_rows),
         "subset_counts": dict(subset_counts),
         "category_subset_counts": {

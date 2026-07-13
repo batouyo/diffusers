@@ -66,6 +66,7 @@ def main() -> None:
     results["gate"] = {"metric": "locked_validation_spearman", "threshold": 0.7}
     results["gate_pass"] = bool(locked["spearman"] is not None and locked["spearman"] >= 0.7)
     results["labels_sha256"] = hashlib.sha256((root / "blinded_labels.csv").read_bytes()).hexdigest()
+    results["scoring_protocol_hash"] = file_sha256(__file__)
     (root / "calibration_report.json").write_text(
         json.dumps(results, indent=2, allow_nan=False), encoding="utf-8"
     )

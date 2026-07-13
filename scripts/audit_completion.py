@@ -17,6 +17,7 @@ from verify_pilot_followup import sentinel_current as followup_sentinel_current
 from verify_formal_complete import sentinel_current as formal_sentinel_current
 from verify_alpha_scan import sentinel_current as alpha_sentinel_current
 from verify_dataset import sentinel_current as dataset_sentinel_current
+from make_calibration_bundle import bundle_current
 
 
 ROOT = Path("/home/hyp/Code/flux-kontext-block-probing")
@@ -148,6 +149,23 @@ def main() -> None:
         json.loads(calibration_manifest_path.read_text(encoding="utf-8"))
         if calibration_manifest_path.exists()
         else {}
+    )
+    calibration_report_path = run_root / "calibration" / "calibration_report.json"
+    calibration_report = (
+        json.loads(calibration_report_path.read_text(encoding="utf-8"))
+        if calibration_report_path.exists()
+        else {}
+    )
+    calibration_score_current = bool(
+        calibration_report.get("gate_pass") is True
+        and calibration_report.get("labels_sha256")
+        == (
+            file_sha256(run_root / "calibration" / "blinded_labels.csv")
+            if (run_root / "calibration" / "blinded_labels.csv").exists()
+            else None
+        )
+        and calibration_report.get("scoring_protocol_hash")
+        == file_sha256(ROOT / "scripts" / "score_calibration.py")
     )
     joint_path = run_root / "joint_validation.json"
     joint = json.loads(joint_path.read_text(encoding="utf-8")) if joint_path.exists() else {}
@@ -296,14 +314,14 @@ def main() -> None:
             )
             and calibration_manifest.get("status") == "complete"
             and calibration_manifest.get("examples") == 80
-            and calibration_manifest.get("subset_counts") == {"prompt_calibration": 40, "locked_validation": 40},
+            and calibration_manifest.get("subset_counts") == {"prompt_calibration": 40, "locked_validation": 40}
+            and bundle_current(ROOT),
             calibration_manifest_path,
         ),
         check(
             "human calibration gate",
-            (run_root / "calibration" / "calibration_report.json").exists()
-            and json.loads((run_root / "calibration" / "calibration_report.json").read_text(encoding="utf-8")).get("gate_pass", False),
-            run_root / "calibration" / "calibration_report.json",
+            calibration_score_current,
+            calibration_report_path,
         ),
         check(
             "joint heldout validation or preregistered no-go",

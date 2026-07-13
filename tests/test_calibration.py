@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from scripts.make_calibration_bundle import row_identity_hash
+from scripts.make_calibration_bundle import bundle_current, row_identity_hash
 from scripts.make_calibration_manifest import balanced_category_items
 
 
@@ -42,3 +42,7 @@ def test_blinded_row_identity_ignores_only_human_response_fields():
     assert row_identity_hash(row) == original
     row["instruction"] = "different"
     assert row_identity_hash(row) != original
+
+
+def test_missing_bundle_is_not_current(tmp_path):
+    assert not bundle_current(tmp_path)

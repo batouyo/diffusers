@@ -9,13 +9,19 @@ from pathlib import Path
 import pandas as pd
 import yaml
 
+from probe_flux_kontext_blocks import file_sha256
+
 try:
+    from make_calibration_bundle import bundle_current
     from verify_alpha_scan import sentinel_current as alpha_sentinel_current
+    from verify_dataset import sentinel_current as dataset_sentinel_current
     from verify_formal_complete import sentinel_current as formal_sentinel_current
     from verify_pilot_complete import sentinel_current as pilot_sentinel_current
     from verify_pilot_followup import sentinel_current as followup_sentinel_current
 except ModuleNotFoundError:  # package import during tests
+    from scripts.make_calibration_bundle import bundle_current
     from scripts.verify_alpha_scan import sentinel_current as alpha_sentinel_current
+    from scripts.verify_dataset import sentinel_current as dataset_sentinel_current
     from scripts.verify_formal_complete import sentinel_current as formal_sentinel_current
     from scripts.verify_pilot_complete import sentinel_current as pilot_sentinel_current
     from scripts.verify_pilot_followup import sentinel_current as followup_sentinel_current
@@ -77,6 +83,7 @@ def main() -> None:
     joint = load_json(run_root / "joint_validation.json", {})
     no_go = load_json(run_root / "FORMAL_NO_GO.json", {})
     calibration = load_json(run_root / "calibration" / "calibration_report.json", {})
+    tests = load_json(output_root / "preflight" / "test_report.json", {})
     pilot_verified = pilot_sentinel_current(ROOT)
     followup_verified = followup_sentinel_current(ROOT)
     formal_verified = formal_sentinel_current(ROOT)
@@ -130,13 +137,28 @@ def main() -> None:
         ]
     comparisons = joint.get("comparisons", {})
     commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
+    labels_path = run_root / "calibration" / "blinded_labels.csv"
+    calibration_current = bool(
+        calibration.get("gate_pass") is True
+        and labels_path.exists()
+        and calibration.get("labels_sha256") == file_sha256(labels_path)
+        and calibration.get("scoring_protocol_hash")
+        == file_sha256(ROOT / "scripts" / "score_calibration.py")
+    )
     formal_alpha_verified = not candidates or alpha_sentinel_current(ROOT, "formal")
     core_gates = {
+        "commit_bound_tests": tests.get("status") == "pass" and tests.get("git_commit") == commit,
+        "runtime_structure": int(structure.get("total_block_count", 0)) > 0
+        and len(structure.get("blocks", [])) == int(structure.get("total_block_count", 0)),
+        "alpha1_identity": identity.get("status") == "pass",
+        "dataset": dataset_sentinel_current(ROOT),
         "pilot_stage1": pilot_verified,
         "pilot_followup": followup_verified,
         "pilot_alpha": pilot_alpha_verified,
         "formal_discovery": formal_verified,
         "formal_alpha_or_no_go": formal_alpha_verified,
+        "blind_bundle": bundle_current(ROOT),
+        "human_calibration": calibration_current,
     }
     status = research_status(
         joint,
