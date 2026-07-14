@@ -11,6 +11,18 @@ def test_parse_json_corrects_inconsistent_sum() -> None:
     assert value["score_corrected"] is True
 
 
+def test_parse_json_normalizes_unambiguous_target_overflow() -> None:
+    value = parse_json_object(
+        '{"target_present": 3, "correct_object": 1, "localized_as_requested": 1, '
+        '"score_0_to_4": 3, "evidence": "Requested edit is clearly present."}'
+    )
+    assert value["target_present"] == 2
+    assert value["target_present_original"] == 3
+    assert value["target_present_corrected"] is True
+    assert value["score_0_to_4"] == 4
+    assert value["score_corrected"] is True
+
+
 def test_failed_vlm_cache_is_not_reusable() -> None:
     meta = {"output_sha256": "pixels"}
     prior = {

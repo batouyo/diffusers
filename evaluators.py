@@ -33,6 +33,8 @@ Return exactly one JSON object with:
 - localized_as_requested: integer 0 or 1
 - score_0_to_4: integer sum of the three fields
 - evidence: a brief visual observation, maximum 20 words
+
+Important: target_present must never be 3 or 4. Use 2 for any clearly present edit.
 """
 
 
@@ -91,6 +93,14 @@ def parse_json_object(text: str) -> dict:
     correct = int(value["correct_object"])
     localized = int(value["localized_as_requested"])
     score = int(value["score_0_to_4"])
+    if target in {3, 4} and correct in {0, 1} and localized in {0, 1}:
+        # Some deterministic VLM generations put the overall 0--4 score in
+        # target_present despite the explicit schema. The value is still
+        # unambiguous ("clearly present"), so normalize it transparently.
+        value["target_present_original"] = target
+        value["target_present_corrected"] = True
+        target = 2
+        value["target_present"] = target
     if target not in {0, 1, 2} or correct not in {0, 1} or localized not in {0, 1}:
         raise ValueError(f"VLM rubric values out of range: {value}")
     computed = target + correct + localized
