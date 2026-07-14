@@ -8,7 +8,8 @@ import json
 import subprocess
 from pathlib import Path
 
-from probe_flux_kontext_blocks import load_config, run_jobs
+from probe_flux_kontext_blocks import load_config
+from run_pilot_stage2 import run_parallel_evaluation, run_parallel_generation
 
 
 ROOT = Path("/home/hyp/Code/flux-kontext-block-probing")
@@ -50,12 +51,9 @@ def main() -> None:
         if args.pilot:
             config["project"]["dataset_manifest"] = str(pilot_manifest(base))
             config["inference"]["seeds"] = [config["inference"]["pilot_seed"]]
-        run_jobs(config, "enhance_text", args.device, 0, 1, candidates, "discovery", None)
-    subprocess.run(
-        [str(ROOT / ".venv/bin/python"), "evaluators.py", "--config", "probe_config.yaml", "--device", args.device],
-        cwd=ROOT,
-        check=True,
-    )
+        alpha_label = str(alpha).replace(".", "p")
+        run_parallel_generation(config, "enhance_text", candidates, f"alpha_{alpha_label}")
+    run_parallel_evaluation()
     subprocess.run(
         [str(ROOT / ".venv/bin/python"), "aggregate_results.py", "--config", "probe_config.yaml"],
         cwd=ROOT,
