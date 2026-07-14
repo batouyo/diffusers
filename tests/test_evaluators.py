@@ -23,6 +23,18 @@ def test_parse_json_normalizes_unambiguous_target_overflow() -> None:
     assert value["score_corrected"] is True
 
 
+def test_parse_json_normalizes_binary_field_overflow() -> None:
+    value = parse_json_object(
+        '{"target_present": 2, "correct_object": 1, "localized_as_requested": 2, '
+        '"score_0_to_4": 6, "evidence": "Requested edit is in the correct region."}'
+    )
+    assert value["localized_as_requested"] == 1
+    assert value["localized_as_requested_original"] == 2
+    assert value["localized_as_requested_corrected"] is True
+    assert value["score_0_to_4"] == 4
+    assert value["score_corrected"] is True
+
+
 def test_failed_vlm_cache_is_not_reusable() -> None:
     meta = {"output_sha256": "pixels"}
     prior = {

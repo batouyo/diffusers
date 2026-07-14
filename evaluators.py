@@ -35,6 +35,7 @@ Return exactly one JSON object with:
 - evidence: a brief visual observation, maximum 20 words
 
 Important: target_present must never be 3 or 4. Use 2 for any clearly present edit.
+correct_object and localized_as_requested are binary and must never be 2.
 """
 
 
@@ -101,6 +102,16 @@ def parse_json_object(text: str) -> dict:
         value["target_present_corrected"] = True
         target = 2
         value["target_present"] = target
+    for field, field_value in (
+        ("correct_object", correct),
+        ("localized_as_requested", localized),
+    ):
+        if field_value == 2:
+            value[f"{field}_original"] = field_value
+            value[f"{field}_corrected"] = True
+            value[field] = 1
+    correct = int(value["correct_object"])
+    localized = int(value["localized_as_requested"])
     if target not in {0, 1, 2} or correct not in {0, 1} or localized not in {0, 1}:
         raise ValueError(f"VLM rubric values out of range: {value}")
     computed = target + correct + localized
