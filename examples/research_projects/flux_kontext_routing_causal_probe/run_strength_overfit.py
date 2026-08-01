@@ -31,6 +31,9 @@ from strength_overfit_data import (
     sha256_file,
     write_json,
 )
+from strength_overfit_evaluation import (
+    append_metrics, relative_rms, save_contact_sheet, write_summary_csv,
+)
 from strength_overfit_masks import TemporalMaskEMA, make_mask
 from strength_overfit_training import (
     checked_teacher_pair,
@@ -370,11 +373,136 @@ def do_train(config: dict[str, Any], args: argparse.Namespace) -> None:
             print(json.dumps({key: row[key] for key in ("step", "sample_id", "strength", "total", "velocity", "grad_norm")}), flush=True)
 
 
+def _decode_target_image(pipeline: Any, packed: torch.Tensor, width: int, height: int) -> Image.Image:
+    latents = pipeline._unpack_latents(
+        packed.to(pipeline._execution_device),
+        height,
+        width,
+        pipeline.vae_scale_factor,
+    )
+    shift = float(getattr(pipeline.vae.config, "shift_factor", 0.0))
+    latents = latents / float(pipeline.vae.config.scaling_factor) + shift
+    with torch.no_grad():
+        decoded = pipeline.vae.decode(latents.to(dtype=pipeline.vae.dtype), return_dict=False)[0]
+    return pipeline.image_processor.postprocess(decoded, output_type="pil")[0]
+
+
+def _latest_checkpoint(root: Path) -> Path:
+    candidates = sorted((root / "checkpoints").glob("checkpoint_*.pt"))
+    if not candidates:
+        raise FileNotFoundError("no checkpoint found; train before evaluating")
+    return candidates[-1]
+
+
+def _restore_intervention(intervention: Any, checkpoint_path: Path, legacy: bool) -> None:
+    payload = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+    state = payload["adapter"]
+    if legacy:
+        for name, parameter in intervention.named_parameters():
+            parameter.data.copy_(state[name].to(device=parameter.device, dtype=parameter.dtype))
+    else:
+        intervention.load_state_dict(state)
+
+
+def _rollout_strength(
+    *,
+    pipeline: Any,
+    intervention: Any,
+    legacy: bool,
+    cache: dict[str, Any],
+    conditioning: dict[str, torch.Tensor],
+    base: dict[str, Any],
+    strength: float,
+    mask_config: dict[str, Any],
+    device: str,
+) -> tuple[torch.Tensor, list[dict[str, Any]]]:
+    current = cache["target_states"][0].detach().cpu()
+    ema = TemporalMaskEMA(beta=float(mask_config["beta"])) if mask_config["type"] != "none" else None
+    trace: list[dict[str, Any]] = []
+    for index, timestep in enumerate(cache["timesteps"]):
+        sigma = float(cache["sigmas"][index].item())
+        next_sigma = float(cache["sigmas"][index + 1].item()) if index + 1 < len(cache["sigmas"]) else 0.0
+        spatial = None
+        if mask_config["type"] != "none":
+            with torch.no_grad():
+                v_edit = direct_velocity(
+                    pipeline.transformer, current, timestep, cache["image_tail"], cache["img_ids"],
+                    conditioning["edit"], base["guidance_scale"], device,
+                )
+                v_neutral = direct_velocity(
+                    pipeline.transformer, current, timestep, cache["image_tail"], cache["img_ids"],
+                    conditioning["neutral"], base["guidance_scale"], device,
+                )
+            spatial = make_mask(
+                v_edit, v_neutral, mask_type=mask_config["type"], tau=float(mask_config["tau"]),
+                temperature=float(mask_config["temperature"]), lambda_bg=float(mask_config["lambda_bg"]), ema=ema,
+            ).weight
+        velocity, _regularizer = _student_velocity(
+            intervention, legacy, current, timestep, cache, conditioning["edit"], base, device, strength, sigma, spatial,
+        )
+        current = euler_step(current, velocity.detach(), sigma, next_sigma).detach().cpu()
+        trace.append({"step": index, "sigma": sigma, "latent_rms": float(current.float().square().mean().sqrt().item()), "layer_metrics": intervention.detached_metrics()})
+    return current, trace
+
+
 def do_evaluate(config: dict[str, Any], args: argparse.Namespace) -> None:
+    assert_diffusers_checkout(REPO_ROOT)
     root = initialize_run(config, args.resume)
-    report = {"stage": config["stage"], "status": "evaluation scaffold ready", "required_strengths": config["evaluation"]["strengths"], "message": "Use prepared rollout caches and a selected checkpoint; no metrics are synthesized."}
-    write_json(root / "metrics" / "evaluation_request.json", report)
-    print(json.dumps(report, indent=2), flush=True)
+    samples = load_metadata(config["metadata_path"])
+    if config.get("sample_limit") is not None:
+        samples = samples[: int(config["sample_limit"])]
+    base = base_sampling_config(config)
+    pipeline = load_pipeline(base, args.device)
+    configure_pipeline(pipeline, config)
+    legacy = config["stage"] == "previous_scaling"
+    checkpoint = Path(args.checkpoint) if args.checkpoint else _latest_checkpoint(root)
+    all_rows: list[dict[str, Any]] = []
+    for sample in samples:
+        conditioning = {
+            "edit": encode_conditioning(pipeline, base, sample.full_prompt),
+            "neutral": encode_conditioning(pipeline, base, sample.neutral_prompt),
+        }
+        for seed in sample.rollout_seeds:
+            cache = torch.load(cache_path(root, sample.sample_id, seed), map_location="cpu", weights_only=False)
+            intervention = _build_intervention(config, cache, pipeline, legacy)
+            _restore_intervention(intervention, checkpoint, legacy)
+            width = int(sample.resolved_width or 1024)
+            height = int(sample.resolved_height or 1024)
+            full_latent, _ = _rollout_strength(
+                pipeline=pipeline, intervention=intervention, legacy=legacy, cache=cache, conditioning=conditioning,
+                base=base, strength=1.0, mask_config={**config["mask"], "type": "none"}, device=args.device,
+            )
+            neutral_intervention = _build_intervention(config, cache, pipeline, legacy)
+            if legacy:
+                neutral_intervention.set_scale(1.0)
+            else:
+                neutral_intervention.set_context(strength=0.0, sigma=float(cache["sigmas"][0]), spatial_weight=None)
+            images: list[Image.Image] = []
+            labels: list[str] = []
+            seed_rows: list[dict[str, Any]] = []
+            for strength in [float(value) for value in config["evaluation"]["strengths"]]:
+                latent, trace = _rollout_strength(
+                    pipeline=pipeline, intervention=intervention, legacy=legacy, cache=cache, conditioning=conditioning,
+                    base=base, strength=strength, mask_config=config["mask"], device=args.device,
+                )
+                image = _decode_target_image(pipeline, latent, width, height)
+                image_path = root / "images" / config["stage"] / sample.sample_id / f"seed_{seed}_s_{strength:.1f}.png"
+                image_path.parent.mkdir(parents=True, exist_ok=True)
+                image.save(image_path)
+                images.append(image)
+                labels.append(f"s={strength:.1f}")
+                seed_rows.append({
+                    "method": config["method"], "stage": config["stage"], "sample_id": sample.sample_id, "seed": seed,
+                    "strength": strength, "image": str(image_path), "latent_to_full_relative_rms": relative_rms(latent, full_latent),
+                    "trace_steps": len(trace), "peak_cuda_mem_gb": torch.cuda.max_memory_allocated() / 2**30,
+                })
+            save_contact_sheet(images, labels, root / "contact_sheets" / f"{config['stage']}_{sample.sample_id}_seed{seed}.png")
+            all_rows.extend(seed_rows)
+    append_metrics(root / "metrics" / "raw_metrics.jsonl", all_rows)
+    write_summary_csv(root / "metrics" / "summary_by_sample.csv", all_rows)
+    write_json(root / "metrics" / "evaluation_complete.json", {"checkpoint": str(checkpoint), "rows": len(all_rows), "perceptual_metrics": "pending local DINO/LPIPS/CLIP pass; no metric is synthesized"})
+    print(json.dumps({"checkpoint": str(checkpoint), "rows": len(all_rows)}, indent=2), flush=True)
+
 
 
 def do_report(config: dict[str, Any], args: argparse.Namespace) -> None:
