@@ -1,0 +1,11 @@
+{
+  "base_config": "common.json",
+  "stage": "stage1a_pilot",
+  "run_id": "stage1a_pilot2_v1",
+  "method": "strength_early",
+  "sample_limit": 2,
+  "training": {
+    "max_updates": 300
+  }
+}
+

@@ -1,0 +1,8 @@
+{
+  "base_config": "common.json",
+  "stage": "previous_scaling",
+  "run_id": "previous_scaling_core5_v1",
+  "method": "previous_scaling",
+  "strength_training": "zero_only"
+}
+

@@ -1,0 +1,20 @@
+{
+  "base_config": "common.json",
+  "stage": "stage3_hard",
+  "run_id": "stage3_hard_core5_v1",
+  "method": "hard_mask",
+  "training": {
+    "learning_rate": 0.00005,
+    "max_updates": 500
+  },
+  "online": {
+    "static_probability": 0.5,
+    "rollout_steps": 2
+  },
+  "mask": {
+    "type": "hard",
+    "tau": 0.5,
+    "lambda_bg": 0.2
+  }
+}
+

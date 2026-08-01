@@ -1,0 +1,12 @@
+{
+  "base_config": "common.json",
+  "stage": "stage4",
+  "run_id": "stage4_expand10_v1",
+  "method": "best_expand10",
+  "training": {
+    "learning_rate": 0.00005,
+    "max_updates": 1500
+  },
+  "sample_limit": 10
+}
+

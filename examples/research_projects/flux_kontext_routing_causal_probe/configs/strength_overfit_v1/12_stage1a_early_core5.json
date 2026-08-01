@@ -1,0 +1,7 @@
+{
+  "base_config": "common.json",
+  "stage": "stage1a",
+  "run_id": "stage1a_early_core5_v1",
+  "method": "strength_early"
+}
+

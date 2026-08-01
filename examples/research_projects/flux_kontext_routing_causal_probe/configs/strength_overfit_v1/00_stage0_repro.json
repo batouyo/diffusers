@@ -1,0 +1,19 @@
+{
+  "base_config": "common.json",
+  "stage": "stage0",
+  "run_id": "stage0_repro_native_flash_v1",
+  "legacy": {
+    "script": "run_target_residual_vkeep.py",
+    "config": "configs/oracle_vkeep_early2_rank4_native_flash.json",
+    "phase": "formal",
+    "sample_ids": [
+      "attribute_01",
+      "pose_01"
+    ]
+  },
+  "preflight": {
+    "smoke_steps": 4,
+    "require_gpu_smoke": true
+  }
+}
+

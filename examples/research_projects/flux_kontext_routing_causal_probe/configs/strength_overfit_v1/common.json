@@ -1,0 +1,99 @@
+{
+  "run_name": "strength_overfit_v1",
+  "output_root": "/data15/hyp/experiments/flux_kontext_strength_overfit_v1",
+  "metadata_path": "/data15/hyp/experiments/flux_kontext_strength_overfit_v1/dataset/metadata.jsonl",
+  "model_path": "/data15/hyp/weight/FLUX.1-Kontext-dev",
+  "dtype": "bf16",
+  "device": "cuda",
+  "attention_backend": "_native_flash",
+  "scheduler": {
+    "num_inference_steps": 28,
+    "guidance_scale": 2.5,
+    "true_cfg_scale": 1,
+    "max_sequence_length": 512,
+    "heldout_indices": [
+      4,
+      13,
+      23
+    ]
+  },
+  "seed": 20260801,
+  "adapter": {
+    "rank": 4,
+    "alpha": 4,
+    "gate_hidden_dim": 32,
+    "layers": [
+      "dual.00",
+      "dual.01",
+      "dual.02"
+    ]
+  },
+  "training": {
+    "learning_rate": 0.0001,
+    "weight_decay": 0,
+    "betas": [
+      0.9,
+      0.99
+    ],
+    "batch_size": 1,
+    "gradient_accumulation": 1,
+    "gradient_clip_norm": 1,
+    "max_updates": 1500,
+    "eval_interval": 100,
+    "checkpoint_interval": 100,
+    "preview_interval": 100,
+    "patience_evaluations": 5
+  },
+  "strength": {
+    "p_zero": 0.2,
+    "p_one": 0.2,
+    "pair_probability": 0.5
+  },
+  "loss": {
+    "lambda_mono": 0.05,
+    "lambda_progress": 0.1,
+    "lambda_reg": 0.0001,
+    "margin": 0.01,
+    "epsilon": 1e-8,
+    "warmup_steps": 300,
+    "ramp_steps": 200
+  },
+  "online": {
+    "static_probability": 1,
+    "rollout_steps": 1
+  },
+  "mask": {
+    "type": "none",
+    "low_quantile": 0.05,
+    "high_quantile": 0.95,
+    "tau": 0.5,
+    "temperature": 0.1,
+    "beta": 0.7,
+    "lambda_bg": 0.2
+  },
+  "evaluation": {
+    "strengths": [
+      0,
+      0.1,
+      0.2,
+      0.3,
+      0.4,
+      0.5,
+      0.6,
+      0.7,
+      0.8,
+      0.9,
+      1
+    ],
+    "quick_strengths": [
+      0,
+      0.25,
+      0.5,
+      0.75,
+      1
+    ],
+    "dino_path": "/data15/hyp/weight/dinov2-large",
+    "clip_path": "/data15/hyp/weight/huggingface/hub/models--openai--clip-vit-large-patch14"
+  }
+}
+

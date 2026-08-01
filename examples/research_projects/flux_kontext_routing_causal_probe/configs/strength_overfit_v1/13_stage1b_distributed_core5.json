@@ -1,0 +1,17 @@
+{
+  "base_config": "common.json",
+  "stage": "stage1b",
+  "run_id": "stage1b_distributed_core5_v1",
+  "method": "strength_distributed",
+  "adapter": {
+    "layers": [
+      "dual.00",
+      "dual.01",
+      "dual.10",
+      "dual.18",
+      "single.19",
+      "single.34"
+    ]
+  }
+}
+

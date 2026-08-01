@@ -1,0 +1,15 @@
+{
+  "base_config": "common.json",
+  "stage": "stage2",
+  "run_id": "stage2_online2_core5_v1",
+  "method": "online",
+  "training": {
+    "learning_rate": 0.00005,
+    "max_updates": 1000
+  },
+  "online": {
+    "static_probability": 0.5,
+    "rollout_steps": 2
+  }
+}
+
