@@ -1,0 +1,18 @@
+{
+  "base_config": "common.json",
+  "stage": "stage1a_pilot_fix1",
+  "run_id": "stage1a_pilot2_fix1_v1",
+  "method": "strength_early_progress",
+  "sample_limit": 2,
+  "training": {
+    "learning_rate": 0.001,
+    "max_updates": 400
+  },
+  "loss": {
+    "warmup_steps": 50,
+    "ramp_steps": 100
+  },
+  "strength": {
+    "pair_probability": 0.0
+  }
+}

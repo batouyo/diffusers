@@ -1,0 +1,21 @@
+{
+  "base_config": "common.json",
+  "stage": "stage1b_pilot",
+  "run_id": "stage1b_distributed_pilot2_v1",
+  "method": "strength_distributed",
+  "sample_limit": 2,
+  "adapter": {
+    "layers": ["dual.00", "dual.01", "dual.10", "dual.18", "single.19", "single.34"]
+  },
+  "training": {
+    "learning_rate": 0.0003,
+    "max_updates": 600
+  },
+  "loss": {
+    "warmup_steps": 50,
+    "ramp_steps": 100
+  },
+  "strength": {
+    "pair_probability": 0.5
+  }
+}

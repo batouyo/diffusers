@@ -1,0 +1,18 @@
+{
+  "base_config": "common.json",
+  "stage": "stage1a_lrprobe",
+  "run_id": "stage1a_pilot2_lrprobe_v1",
+  "method": "strength_early_lrprobe",
+  "sample_limit": 2,
+  "training": {
+    "learning_rate": 0.001,
+    "max_updates": 150
+  },
+  "loss": {
+    "warmup_steps": 150,
+    "ramp_steps": 100
+  },
+  "strength": {
+    "pair_probability": 0.0
+  }
+}

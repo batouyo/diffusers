@@ -40,6 +40,7 @@ from strength_overfit_training import (
     euler_step,
     finite_or_raise,
     loss_weights,
+    progress_q,
     sample_strength_pair,
     velocity_losses,
 )
@@ -57,6 +58,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--checkpoint")
+    parser.add_argument("--quick-eval", action="store_true")
     parser.add_argument("--skip-gpu-smoke", action="store_true")
     return parser.parse_args()
 
@@ -311,6 +313,10 @@ def do_train(config: dict[str, Any], args: argparse.Namespace) -> None:
     legacy = config["stage"] == "previous_scaling"
     intervention = _build_intervention(config, caches[0][1], pipeline, legacy)
     optimizer = torch.optim.AdamW(list(intervention.parameters()), lr=float(config["training"]["learning_rate"]), betas=tuple(config["training"]["betas"]), weight_decay=float(config["training"]["weight_decay"]))
+    warm_start_checkpoint = None
+    if args.checkpoint:
+        warm_start_checkpoint = str(Path(args.checkpoint).resolve())
+        _restore_intervention(intervention, Path(args.checkpoint), legacy)
     conditioning = {sample.sample_id: {"edit": encode_conditioning(pipeline, base, sample.full_prompt), "neutral": encode_conditioning(pipeline, base, sample.neutral_prompt)} for sample in samples}
     generator = torch.Generator().manual_seed(int(config["seed"]))
     heldout = set(int(value) for value in config["scheduler"]["heldout_indices"])
@@ -331,7 +337,13 @@ def do_train(config: dict[str, Any], args: argparse.Namespace) -> None:
         # expensive at 1024px.  Enable paired strengths when the ramp begins.
         if step <= int(config["loss"]["warmup_steps"]):
             pair = type(pair)(first=pair.first, second=None)
+        optimizer.zero_grad(set_to_none=True)
+        backward_performed = False
+        layer_metrics_for_log = None
         if int(config["online"]["rollout_steps"]) == 2 and float(torch.rand((), generator=generator).item()) >= float(config["online"]["static_probability"]):
+            # Paired-strength monotonic supervision is applied on the static
+            # half of Stage2 batches. Each online segment keeps one fixed s.
+            pair = type(pair)(first=pair.first, second=None)
             current = state.detach()
             total = None
             mask_ema = TemporalMaskEMA(beta=float(config["mask"]["beta"])) if config["mask"]["type"] != "none" else None
@@ -371,25 +383,58 @@ def do_train(config: dict[str, Any], args: argparse.Namespace) -> None:
         else:
             v_edit = cache["v_edit"][index:index + 1].to(args.device)
             v_neutral = cache["v_neutral"][index:index + 1].to(args.device)
-            student, regularizer = _student_velocity(intervention, legacy, state, timestep, cache, conditioning[sample.sample_id]["edit"], base, args.device, pair.first, sigma, None)
-            second_student = None
-            if pair.second is not None:
-                second_student, second_regularizer = _student_velocity(intervention, legacy, state, timestep, cache, conditioning[sample.sample_id]["edit"], base, args.device, pair.second, sigma, None)
-                regularizer = 0.5 * (regularizer + second_regularizer)
             mono_weight, progress_weight = loss_weights(step, warmup_steps=int(config["loss"]["warmup_steps"]), ramp_steps=int(config["loss"]["ramp_steps"]), lambda_mono=float(config["loss"]["lambda_mono"]), lambda_progress=float(config["loss"]["lambda_progress"]))
-            losses = velocity_losses(v_student=student, v_edit=v_edit, v_neutral=v_neutral, strength=pair.first, second_student=second_student, second_strength=pair.second, lambda_mono=mono_weight, lambda_progress=progress_weight, lambda_reg=float(config["loss"]["lambda_reg"]), regularizer=regularizer, margin=float(config["loss"]["margin"]), eps=float(config["loss"]["epsilon"]))
+            student, regularizer = _student_velocity(intervention, legacy, state, timestep, cache, conditioning[sample.sample_id]["edit"], base, args.device, pair.first, sigma, None)
+            if pair.second is None:
+                losses = velocity_losses(v_student=student, v_edit=v_edit, v_neutral=v_neutral, strength=pair.first, lambda_mono=mono_weight, lambda_progress=progress_weight, lambda_reg=float(config["loss"]["lambda_reg"]), regularizer=regularizer, margin=float(config["loss"]["margin"]), eps=float(config["loss"]["epsilon"]))
+            else:
+                # Two simultaneous 1024px FLUX autograd graphs exceed one H20.
+                # Backpropagate the lower-strength objective first, then use
+                # its detached q as the monotonic boundary for the upper s.
+                first_losses = velocity_losses(v_student=student, v_edit=v_edit, v_neutral=v_neutral, strength=pair.first, lambda_progress=0.5 * progress_weight, lambda_reg=0.5 * float(config["loss"]["lambda_reg"]), regularizer=regularizer, margin=float(config["loss"]["margin"]), eps=float(config["loss"]["epsilon"]))
+                q_first, direction_norm = progress_q(student, v_edit, v_neutral, float(config["loss"]["epsilon"]))
+                q_first_detached = q_first.detach()
+                first_metrics = [{**item, "student_strength": pair.first} for item in intervention.detached_metrics()]
+                finite_or_raise({name: value for name, value in first_losses.items() if torch.is_tensor(value)})
+                first_losses["total"].backward()
+                first_values = {name: value.detach() for name, value in first_losses.items()}
+                del student, regularizer, first_losses, q_first
+
+                second_student, second_regularizer = _student_velocity(intervention, legacy, state, timestep, cache, conditioning[sample.sample_id]["edit"], base, args.device, pair.second, sigma, None)
+                second_losses = velocity_losses(v_student=second_student, v_edit=v_edit, v_neutral=v_neutral, strength=pair.second, lambda_progress=0.5 * progress_weight, lambda_reg=0.5 * float(config["loss"]["lambda_reg"]), regularizer=second_regularizer, margin=float(config["loss"]["margin"]), eps=float(config["loss"]["epsilon"]))
+                q_second, _ = progress_q(second_student, v_edit, v_neutral, float(config["loss"]["epsilon"]))
+                valid = direction_norm > float(config["loss"]["epsilon"])
+                monotonic = torch.relu(q_first_detached[valid] - q_second[valid] + float(config["loss"]["margin"])).mean() if valid.any() else second_losses["total"].new_zeros(())
+                second_total = second_losses["total"] + mono_weight * monotonic
+                finite_or_raise({**{name: value for name, value in second_losses.items() if torch.is_tensor(value)}, "monotonic": monotonic, "second_total": second_total})
+                second_total.backward()
+                layer_metrics_for_log = first_metrics + [{**item, "student_strength": pair.second} for item in intervention.detached_metrics()]
+                losses = {
+                    "total": first_values["total"] + second_total.detach(),
+                    "velocity": first_values["velocity"],
+                    "second_velocity": second_losses["velocity"].detach(),
+                    "monotonic": monotonic.detach(),
+                    "progress": 0.5 * (first_values["progress"] + second_losses["progress"].detach()),
+                    "regularizer": 0.5 * (first_values["regularizer"] + second_losses["regularizer"].detach()),
+                    "q_mean": q_first_detached.mean(),
+                    "q_second_mean": q_second.detach().mean(),
+                    "direction_degenerate": first_values["direction_degenerate"],
+                }
+                backward_performed = True
         finite_or_raise({name: value for name, value in losses.items() if torch.is_tensor(value)})
-        optimizer.zero_grad(set_to_none=True)
-        losses["total"].backward()
+        if not backward_performed:
+            losses["total"].backward()
         grad_norm = torch.nn.utils.clip_grad_norm_(list(intervention.parameters()), float(config["training"]["gradient_clip_norm"]))
         optimizer.step()
-        row = {"step": step, "sample_id": sample.sample_id, "state_index": index, "strength": pair.first, "second_strength": pair.second, "grad_norm": float(grad_norm), "peak_cuda_mem_gb": torch.cuda.max_memory_allocated() / 2**30, **{name: float(value.detach().item()) for name, value in losses.items()}, "layer_metrics": intervention.detached_metrics(), "parameter_norms": intervention.parameter_norms()}
+        if layer_metrics_for_log is None:
+            layer_metrics_for_log = intervention.detached_metrics()
+        row = {"step": step, "sample_id": sample.sample_id, "state_index": index, "strength": pair.first, "second_strength": pair.second, "grad_norm": float(grad_norm), "peak_cuda_mem_gb": torch.cuda.max_memory_allocated() / 2**30, **{name: float(value.detach().item()) for name, value in losses.items()}, "layer_metrics": layer_metrics_for_log, "parameter_norms": intervention.parameter_norms(), "warm_start_checkpoint": warm_start_checkpoint}
         append_jsonl(log_path, row)
         if row["total"] < best:
             best = row["total"]
         if step % int(config["training"]["checkpoint_interval"]) == 0 or step == int(config["training"]["max_updates"]):
             adapter_state = intervention.state_dict() if not legacy else {name: value.detach().cpu() for name, value in intervention.named_parameters()}
-            torch.save({"step": step, "config": config, "adapter": adapter_state, "optimizer": optimizer.state_dict(), "best_train_loss": best}, root / "checkpoints" / f"checkpoint_{step:06d}.pt")
+            torch.save({"step": step, "config": config, "adapter": adapter_state, "optimizer": optimizer.state_dict(), "best_train_loss": best, "warm_start_checkpoint": warm_start_checkpoint}, root / "checkpoints" / f"checkpoint_{step:06d}.pt")
         if step == 1 or step % 10 == 0:
             print(json.dumps({key: row[key] for key in ("step", "sample_id", "strength", "total", "velocity", "grad_norm")}), flush=True)
 
@@ -477,13 +522,18 @@ def do_evaluate(config: dict[str, Any], args: argparse.Namespace) -> None:
     configure_pipeline(pipeline, config)
     legacy = config["stage"] == "previous_scaling"
     checkpoint = Path(args.checkpoint) if args.checkpoint else _latest_checkpoint(root)
+    evaluation_key = "quick_strengths" if args.quick_eval else "strengths"
+    strengths = [float(value) for value in config["evaluation"][evaluation_key]]
+    output_tag = f"{config['stage']}_quick" if args.quick_eval else config["stage"]
+    metric_suffix = "_quick" if args.quick_eval else ""
     all_rows: list[dict[str, Any]] = []
     for sample in samples:
         conditioning = {
             "edit": encode_conditioning(pipeline, base, sample.full_prompt),
             "neutral": encode_conditioning(pipeline, base, sample.neutral_prompt),
         }
-        for seed in sample.rollout_seeds:
+        rollout_seeds = sample.rollout_seeds[:1] if args.quick_eval else sample.rollout_seeds
+        for seed in rollout_seeds:
             cache = torch.load(cache_path(root, sample.sample_id, seed), map_location="cpu", weights_only=False)
             intervention = _build_intervention(config, cache, pipeline, legacy)
             _restore_intervention(intervention, checkpoint, legacy)
@@ -501,13 +551,13 @@ def do_evaluate(config: dict[str, Any], args: argparse.Namespace) -> None:
             images: list[Image.Image] = []
             labels: list[str] = []
             seed_rows: list[dict[str, Any]] = []
-            for strength in [float(value) for value in config["evaluation"]["strengths"]]:
+            for strength in strengths:
                 latent, trace = _rollout_strength(
                     pipeline=pipeline, intervention=intervention, legacy=legacy, cache=cache, conditioning=conditioning,
                     base=base, strength=strength, mask_config=config["mask"], device=args.device,
                 )
                 image = _decode_target_image(pipeline, latent, width, height)
-                image_path = root / "images" / config["stage"] / sample.sample_id / f"seed_{seed}_s_{strength:.1f}.png"
+                image_path = root / "images" / output_tag / sample.sample_id / f"seed_{seed}_s_{strength:.2f}.png"
                 image_path.parent.mkdir(parents=True, exist_ok=True)
                 image.save(image_path)
                 images.append(image)
@@ -515,13 +565,14 @@ def do_evaluate(config: dict[str, Any], args: argparse.Namespace) -> None:
                 seed_rows.append({
                     "method": config["method"], "stage": config["stage"], "sample_id": sample.sample_id, "seed": seed,
                     "strength": strength, "image": str(image_path), "latent_to_full_relative_rms": relative_rms(latent, full_latent),
-                    "trace_steps": len(trace), "peak_cuda_mem_gb": torch.cuda.max_memory_allocated() / 2**30,
+                    "trace_steps": len(trace), "quick_eval": args.quick_eval,
+                    "peak_cuda_mem_gb": torch.cuda.max_memory_allocated() / 2**30,
                 })
-            save_contact_sheet(images, labels, root / "contact_sheets" / f"{config['stage']}_{sample.sample_id}_seed{seed}.png")
+            save_contact_sheet(images, labels, root / "contact_sheets" / f"{output_tag}_{sample.sample_id}_seed{seed}.png")
             all_rows.extend(seed_rows)
-    append_metrics(root / "metrics" / "raw_metrics.jsonl", all_rows)
-    write_summary_csv(root / "metrics" / "summary_by_sample.csv", all_rows)
-    write_json(root / "metrics" / "evaluation_complete.json", {"checkpoint": str(checkpoint), "rows": len(all_rows), "perceptual_metrics": "pending local DINO/LPIPS/CLIP pass; no metric is synthesized"})
+    append_metrics(root / "metrics" / f"raw_metrics{metric_suffix}.jsonl", all_rows)
+    write_summary_csv(root / "metrics" / f"summary_by_sample{metric_suffix}.csv", all_rows)
+    write_json(root / "metrics" / f"evaluation{metric_suffix}_complete.json", {"checkpoint": str(checkpoint), "rows": len(all_rows), "perceptual_metrics": "pending local DINO/LPIPS/CLIP pass; no metric is synthesized"})
     print(json.dumps({"checkpoint": str(checkpoint), "rows": len(all_rows)}, indent=2), flush=True)
 
 
@@ -553,4 +604,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
