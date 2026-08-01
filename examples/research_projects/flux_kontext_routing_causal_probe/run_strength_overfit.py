@@ -253,12 +253,24 @@ def do_prepare(config: dict[str, Any], args: argparse.Namespace) -> None:
 
 
 def _build_intervention(config: dict[str, Any], cache: dict[str, Any], pipeline: Any, legacy: bool) -> Any:
-    hidden_size = int(pipeline.transformer.config.inner_dim)
+    model_config = pipeline.transformer.config
+    # This FLUX-Kontext checkout stores a FrozenDict without inner_dim.
+    hidden_size = int(model_config["attention_head_dim"]) * int(model_config["num_attention_heads"])
     target_tokens = int(cache["layout"]["target_tokens"])
     layers = list(config["adapter"]["layers"])
     if legacy:
         return TargetResidualIntervention(pipeline.transformer, layers, target_tokens=target_tokens, hidden_size=hidden_size, rank=int(config["adapter"]["rank"]), alpha=float(config["adapter"]["alpha"]))
-    return StrengthResidualIntervention(pipeline.transformer, layers, target_tokens=target_tokens, hidden_size=hidden_size, rank=int(config["adapter"]["rank"]), alpha=float(config["adapter"]["alpha"]), gate_hidden_dim=int(config["adapter"]["gate_hidden_dim"]))
+    intervention = StrengthResidualIntervention(
+        pipeline.transformer, layers, target_tokens=target_tokens, hidden_size=hidden_size,
+        rank=int(config["adapter"]["rank"]), alpha=float(config["adapter"]["alpha"]),
+        gate_hidden_dim=int(config["adapter"]["gate_hidden_dim"]),
+    )
+    # The intervention deliberately does not own the frozen transformer, so
+    # its trainable modules must be placed explicitly beside that transformer.
+    adapter_device = pipeline._execution_device
+    intervention.adapters.to(adapter_device)
+    intervention.gate.to(adapter_device)
+    return intervention
 
 
 def _student_velocity(intervention: Any, legacy: bool, state: torch.Tensor, timestep: torch.Tensor, cache: dict[str, Any], conditioning: dict[str, torch.Tensor], base: dict[str, Any], device: str, strength: float, sigma: float, spatial_weight: torch.Tensor | None) -> tuple[torch.Tensor, torch.Tensor]:
@@ -292,6 +304,10 @@ def do_train(config: dict[str, Any], args: argparse.Namespace) -> None:
             caches.append((sample, torch.load(path, map_location="cpu", weights_only=False)))
     pipeline = load_pipeline(base, args.device)
     configure_pipeline(pipeline, config)
+    # Stateful residual hooks are not re-entrant under activation
+    # checkpoint recomputation; use the validated native-flash path directly.
+    if hasattr(pipeline.transformer, "disable_gradient_checkpointing"):
+        pipeline.transformer.disable_gradient_checkpointing()
     legacy = config["stage"] == "previous_scaling"
     intervention = _build_intervention(config, caches[0][1], pipeline, legacy)
     optimizer = torch.optim.AdamW(list(intervention.parameters()), lr=float(config["training"]["learning_rate"]), betas=tuple(config["training"]["betas"]), weight_decay=float(config["training"]["weight_decay"]))
@@ -310,6 +326,11 @@ def do_train(config: dict[str, Any], args: argparse.Namespace) -> None:
         pair = sample_strength_pair(generator, device=torch.device("cpu"), pair_probability=float(config["strength"]["pair_probability"]))
         if legacy:
             pair = type(pair)(first=0.0, second=None)
+        # The configured warm-up has zero monotonic/progress weights, so a
+        # second retained student graph is both unnecessary and prohibitively
+        # expensive at 1024px.  Enable paired strengths when the ramp begins.
+        if step <= int(config["loss"]["warmup_steps"]):
+            pair = type(pair)(first=pair.first, second=None)
         if int(config["online"]["rollout_steps"]) == 2 and float(torch.rand((), generator=generator).item()) >= float(config["online"]["static_probability"]):
             current = state.detach()
             total = None
