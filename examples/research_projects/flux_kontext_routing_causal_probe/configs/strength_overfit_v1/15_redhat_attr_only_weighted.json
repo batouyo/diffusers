@@ -1,0 +1,12 @@
+{
+  "base_config": "14_redhat_attr_only_global.json",
+  "stage": "redhat_static_weighted",
+  "run_id": "redhat_attr_only_weighted_v1",
+  "method": "redhat_diagnostic_teacher_weighted",
+  "loss": {
+    "velocity_weighting": "teacher_difference",
+    "velocity_background_weight": 0.2,
+    "velocity_low_quantile": 0.05,
+    "velocity_high_quantile": 0.95
+  }
+}

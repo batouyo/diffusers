@@ -1,0 +1,14 @@
+{
+  "base_config": "14_redhat_attr_only_global.json",
+  "stage": "redhat_online2_diagnostic",
+  "run_id": "redhat_online2_v1",
+  "method": "redhat_diagnostic_online2",
+  "training": {
+    "learning_rate": 0.0001,
+    "max_updates": 300
+  },
+  "online": {
+    "rollout_steps": 2,
+    "static_probability": 0.5
+  }
+}

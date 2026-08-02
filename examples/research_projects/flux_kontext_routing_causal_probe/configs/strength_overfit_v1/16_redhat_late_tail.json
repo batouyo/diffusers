@@ -1,0 +1,9 @@
+{
+  "base_config": "14_redhat_attr_only_global.json",
+  "stage": "redhat_late_tail",
+  "run_id": "redhat_late_tail_v1",
+  "method": "redhat_diagnostic_late_tail",
+  "adapter": {
+    "layers": ["dual.00", "dual.01", "dual.10", "dual.18", "single.19", "single.37"]
+  }
+}

@@ -1,7 +1,7 @@
 import torch
 
 from strength_overfit_data import assert_same_contract, input_contract
-from strength_overfit_training import interpolated_teacher, velocity_losses
+from strength_overfit_training import interpolated_teacher, teacher_difference_token_weights, velocity_losses
 
 
 def test_contract_detects_changed_latent():
@@ -40,3 +40,29 @@ def test_teacher_endpoints_and_monotonic_loss():
     )
     assert losses["total"].item() < 1e-7
 
+
+def test_teacher_difference_weights_are_detached_mean_one_and_optional():
+    edit = torch.tensor([[[2.0, 0.0], [0.0, 1.0], [0.0, 0.0]]], requires_grad=True)
+    neutral = torch.zeros_like(edit, requires_grad=True)
+    student = torch.full_like(edit, 0.25, requires_grad=True)
+    weights = teacher_difference_token_weights(edit, neutral, background_weight=0.2)
+    assert not weights.requires_grad
+    torch.testing.assert_close(weights.mean(dim=1), torch.ones(1))
+    plain = velocity_losses(v_student=student, v_edit=edit, v_neutral=neutral, strength=0.4)
+    ones = velocity_losses(
+        v_student=student,
+        v_edit=edit,
+        v_neutral=neutral,
+        strength=0.4,
+        token_weights=torch.ones_like(weights),
+    )
+    weighted = velocity_losses(
+        v_student=student,
+        v_edit=edit,
+        v_neutral=neutral,
+        strength=0.4,
+        token_weights=weights,
+    )
+    torch.testing.assert_close(plain["velocity"], ones["velocity"])
+    torch.testing.assert_close(plain["velocity_global"], ones["velocity_global"])
+    assert weighted["velocity_global"].item() == plain["velocity_global"].item()

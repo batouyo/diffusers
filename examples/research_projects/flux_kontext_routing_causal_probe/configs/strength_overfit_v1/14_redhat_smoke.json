@@ -1,0 +1,17 @@
+{
+  "base_config": "14_redhat_attr_only_global.json",
+  "stage": "redhat_native_flash_smoke",
+  "run_id": "redhat_native_flash_smoke_v1",
+  "method": "redhat_diagnostic_smoke",
+  "training": {
+    "max_updates": 4,
+    "checkpoint_interval": 4
+  },
+  "loss": {
+    "warmup_steps": 0,
+    "ramp_steps": 1
+  },
+  "strength": {
+    "pair_probability": 1.0
+  }
+}

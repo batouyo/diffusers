@@ -44,6 +44,51 @@ def interpolated_teacher(v_edit: torch.Tensor, v_neutral: torch.Tensor, strength
         raise ValueError("teacher velocity shapes differ")
     return (s * v_edit.float() + (1.0 - s) * v_neutral.float()).to(v_edit.dtype)
 
+def teacher_difference_token_weights(
+    v_edit: torch.Tensor,
+    v_neutral: torch.Tensor,
+    *,
+    background_weight: float = 0.2,
+    low_quantile: float = 0.05,
+    high_quantile: float = 0.95,
+    eps: float = 1e-8,
+) -> torch.Tensor:
+    """Detached, mean-one token weights derived from the teacher difference.
+
+    This is intentionally a loss-only diagnostic weighting. It does not alter
+    the target residual, the teacher target, or the Stage3 mask mechanism.
+    """
+    if v_edit.shape != v_neutral.shape or v_edit.ndim != 3:
+        raise ValueError("teacher velocities must share [batch, tokens, channels] shape")
+    if not 0.0 <= background_weight <= 1.0:
+        raise ValueError("background_weight must be in [0, 1]")
+    if not 0.0 <= low_quantile < high_quantile <= 1.0:
+        raise ValueError("invalid teacher-difference quantiles")
+    raw = torch.linalg.vector_norm(v_edit.float() - v_neutral.float(), dim=-1)
+    low = torch.quantile(raw, low_quantile, dim=1, keepdim=True)
+    high = torch.quantile(raw, high_quantile, dim=1, keepdim=True)
+    span = high - low
+    normalized = ((raw - low) / span.clamp_min(eps)).clamp(0.0, 1.0)
+    normalized = torch.where((span <= eps).expand_as(normalized), torch.ones_like(normalized), normalized)
+    weights = background_weight + (1.0 - background_weight) * normalized
+    weights = weights / weights.mean(dim=1, keepdim=True).clamp_min(eps)
+    return weights.detach()
+
+
+def _velocity_mse(v_student: torch.Tensor, target: torch.Tensor, token_weights: torch.Tensor | None) -> tuple[torch.Tensor, torch.Tensor]:
+    global_mse = F.mse_loss(v_student.float(), target.float())
+    if token_weights is None:
+        return global_mse, global_mse
+    weights = token_weights.detach().to(device=v_student.device, dtype=torch.float32)
+    if weights.ndim == 3 and weights.shape[-1] == 1:
+        weights = weights[..., 0]
+    if weights.ndim != 2 or weights.shape != v_student.shape[:2]:
+        raise ValueError(f"token_weights must have shape {tuple(v_student.shape[:2])}, got {tuple(weights.shape)}")
+    if not torch.isfinite(weights).all() or torch.any(weights < 0):
+        raise ValueError("token_weights must be finite and non-negative")
+    weighted_mse = ((v_student.float() - target.float()).square().mean(dim=-1) * weights).mean()
+    return weighted_mse, global_mse
+
 
 def progress_q(v_student: torch.Tensor, v_edit: torch.Tensor, v_neutral: torch.Tensor, eps: float = 1e-8) -> tuple[torch.Tensor, torch.Tensor]:
     direction = (v_edit.float() - v_neutral.float()).flatten(1)
@@ -67,9 +112,10 @@ def velocity_losses(
     regularizer: torch.Tensor | None = None,
     margin: float = 0.01,
     eps: float = 1e-8,
+    token_weights: torch.Tensor | None = None,
 ) -> dict[str, torch.Tensor]:
     target = interpolated_teacher(v_edit, v_neutral, strength)
-    velocity = F.mse_loss(v_student.float(), target.float())
+    velocity, velocity_global = _velocity_mse(v_student, target, token_weights)
     q_first, direction_norm = progress_q(v_student, v_edit, v_neutral, eps)
     valid = direction_norm > eps
     progress = (q_first[valid] - float(strength)).abs().mean() if valid.any() else velocity.new_zeros(())
@@ -77,7 +123,7 @@ def velocity_losses(
     second_velocity = velocity.new_zeros(())
     if second_student is not None and second_strength is not None:
         second_target = interpolated_teacher(v_edit, v_neutral, second_strength)
-        second_velocity = F.mse_loss(second_student.float(), second_target.float())
+        second_velocity, _second_velocity_global = _velocity_mse(second_student, second_target, token_weights)
         q_second, _ = progress_q(second_student, v_edit, v_neutral, eps)
         if valid.any():
             mono = F.relu(q_first[valid] - q_second[valid] + margin).mean()
@@ -87,6 +133,7 @@ def velocity_losses(
     return {
         "total": total,
         "velocity": velocity,
+        "velocity_global": velocity_global,
         "second_velocity": second_velocity,
         "monotonic": mono,
         "progress": progress,

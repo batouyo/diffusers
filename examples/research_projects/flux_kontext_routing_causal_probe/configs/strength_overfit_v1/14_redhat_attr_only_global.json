@@ -1,0 +1,24 @@
+{
+  "base_config": "common.json",
+  "stage": "redhat_static_global",
+  "run_id": "redhat_attr_only_global_v1",
+  "method": "redhat_diagnostic_global",
+  "sample_ids": ["attribute_01"],
+  "state_cache_root": "/data15/hyp/experiments/flux_kontext_strength_overfit_v1/runs/stage1b_distributed_pilot2_v1",
+  "adapter": {
+    "layers": ["dual.00", "dual.01", "dual.10", "dual.18", "single.19", "single.34"]
+  },
+  "training": {
+    "learning_rate": 0.0003,
+    "max_updates": 300,
+    "checkpoint_interval": 100
+  },
+  "loss": {
+    "warmup_steps": 50,
+    "ramp_steps": 100,
+    "velocity_weighting": "none"
+  },
+  "strength": {
+    "pair_probability": 0.5
+  }
+}

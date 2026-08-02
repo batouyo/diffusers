@@ -43,6 +43,7 @@ from strength_overfit_training import (
     progress_q,
     sample_strength_pair,
     velocity_losses,
+    teacher_difference_token_weights,
 )
 from strength_residual import StrengthResidualIntervention
 
@@ -78,6 +79,23 @@ def base_sampling_config(config: dict[str, Any]) -> dict[str, Any]:
 def run_root(config: dict[str, Any]) -> Path:
     return Path(config["output_root"]) / "runs" / str(config["run_id"])
 
+def selected_samples(config: dict[str, Any]) -> list[Any]:
+    samples = load_metadata(config["metadata_path"])
+    requested = config.get("sample_ids")
+    if requested is not None:
+        if not isinstance(requested, list) or not requested:
+            raise ValueError("sample_ids must be a non-empty list when provided")
+        by_id = {sample.sample_id: sample for sample in samples}
+        missing = [str(sample_id) for sample_id in requested if str(sample_id) not in by_id]
+        if missing:
+            raise ValueError(f"unknown sample_ids: {missing}")
+        samples = [by_id[str(sample_id)] for sample_id in requested]
+    if config.get("sample_limit") is not None:
+        samples = samples[: int(config["sample_limit"])]
+    if not samples:
+        raise ValueError("no samples selected")
+    return samples
+
 
 def config_fingerprint(config: dict[str, Any]) -> dict[str, Any]:
     return {
@@ -88,8 +106,11 @@ def config_fingerprint(config: dict[str, Any]) -> dict[str, Any]:
         "scheduler": config["scheduler"],
         "attention_backend": config["attention_backend"],
         "seed": config["seed"],
+        "sample_ids": config.get("sample_ids"),
+        "state_cache_root": config.get("state_cache_root"),
+        "loss": config.get("loss"),
+        "online": config.get("online"),
     }
-
 
 def initialize_run(config: dict[str, Any], resume: bool) -> Path:
     root = refuse_overwrite(run_root(config), resume=resume, fingerprint=config_fingerprint(config))
@@ -112,6 +133,9 @@ def configure_pipeline(pipeline: Any, config: dict[str, Any]) -> None:
     if hasattr(pipeline.transformer, "enable_gradient_checkpointing"):
         pipeline.transformer.enable_gradient_checkpointing()
 
+
+def state_cache_root(config: dict[str, Any], own_root: Path) -> Path:
+    return Path(config.get("state_cache_root", own_root))
 
 def cache_path(root: Path, sample_id: str, seed: int) -> Path:
     return root / "dataset" / "states" / sample_id / f"seed_{seed}.pt"
@@ -236,9 +260,7 @@ def do_preflight(config: dict[str, Any], args: argparse.Namespace) -> None:
 def do_prepare(config: dict[str, Any], args: argparse.Namespace) -> None:
     assert_diffusers_checkout(REPO_ROOT)
     root = initialize_run(config, args.resume)
-    samples = load_metadata(config["metadata_path"])
-    if config.get("sample_limit") is not None:
-        samples = samples[: int(config["sample_limit"])]
+    samples = selected_samples(config)
     base = base_sampling_config(config)
     pipeline = load_pipeline(base, args.device)
     configure_pipeline(pipeline, config)
@@ -290,17 +312,30 @@ def _student_velocity(intervention: Any, legacy: bool, state: torch.Tensor, time
     return velocity, intervention.metric_regularizer()
 
 
+
+def _loss_token_weights(config: dict[str, Any], v_edit: torch.Tensor, v_neutral: torch.Tensor) -> torch.Tensor | None:
+    mode = str(config["loss"].get("velocity_weighting", "none"))
+    if mode == "none":
+        return None
+    if mode == "teacher_difference":
+        return teacher_difference_token_weights(
+            v_edit,
+            v_neutral,
+            background_weight=float(config["loss"].get("velocity_background_weight", 0.2)),
+            low_quantile=float(config["loss"].get("velocity_low_quantile", 0.05)),
+            high_quantile=float(config["loss"].get("velocity_high_quantile", 0.95)),
+            eps=float(config["loss"]["epsilon"]),
+        )
+    raise ValueError(f"unknown loss.velocity_weighting: {mode}")
 def do_train(config: dict[str, Any], args: argparse.Namespace) -> None:
     assert_diffusers_checkout(REPO_ROOT)
     root = initialize_run(config, args.resume)
-    samples = load_metadata(config["metadata_path"])
-    if config.get("sample_limit") is not None:
-        samples = samples[: int(config["sample_limit"])]
+    samples = selected_samples(config)
     base = base_sampling_config(config)
     caches = []
     for sample in samples:
         for seed in sample.train_noise_seeds:
-            path = cache_path(root, sample.sample_id, seed)
+            path = cache_path(state_cache_root(config, root), sample.sample_id, seed)
             if not path.exists():
                 raise FileNotFoundError(f"missing prepared cache {path}; run --mode prepare first")
             caches.append((sample, torch.load(path, map_location="cpu", weights_only=False)))
@@ -370,28 +405,30 @@ def do_train(config: dict[str, Any], args: argparse.Namespace) -> None:
                     current_contract,
                 )
                 v_edit, v_neutral, _contract = checked_teacher_pair(edit_call=edit_call, neutral_call=neutral_call)
+                token_weights = _loss_token_weights(config, v_edit, v_neutral)
                 spatial = None
                 if config["mask"]["type"] != "none":
                     result = make_mask(v_edit, v_neutral, mask_type=config["mask"]["type"], tau=float(config["mask"]["tau"]), temperature=float(config["mask"]["temperature"]), lambda_bg=float(config["mask"]["lambda_bg"]), ema=mask_ema)
                     spatial = result.weight
                 student, regularizer = _student_velocity(intervention, legacy, current, current_timestep, cache, conditioning[sample.sample_id]["edit"], base, args.device, pair.first, current_sigma, spatial)
                 mono_weight, progress_weight = loss_weights(step, warmup_steps=int(config["loss"]["warmup_steps"]), ramp_steps=int(config["loss"]["ramp_steps"]), lambda_mono=float(config["loss"]["lambda_mono"]), lambda_progress=float(config["loss"]["lambda_progress"]))
-                losses = velocity_losses(v_student=student, v_edit=v_edit, v_neutral=v_neutral, strength=pair.first, lambda_mono=mono_weight, lambda_progress=progress_weight, lambda_reg=float(config["loss"]["lambda_reg"]), regularizer=regularizer, margin=float(config["loss"]["margin"]), eps=float(config["loss"]["epsilon"]))
+                losses = velocity_losses(v_student=student, v_edit=v_edit, v_neutral=v_neutral, strength=pair.first, lambda_mono=mono_weight, lambda_progress=progress_weight, lambda_reg=float(config["loss"]["lambda_reg"]), regularizer=regularizer, margin=float(config["loss"]["margin"]), eps=float(config["loss"]["epsilon"]), token_weights=token_weights)
                 total = losses["total"] if total is None else total + losses["total"]
                 current = euler_step(current, student.detach(), current_sigma, next_sigma).detach().cpu()
             losses["total"] = total / 2
         else:
             v_edit = cache["v_edit"][index:index + 1].to(args.device)
             v_neutral = cache["v_neutral"][index:index + 1].to(args.device)
+            token_weights = _loss_token_weights(config, v_edit, v_neutral)
             mono_weight, progress_weight = loss_weights(step, warmup_steps=int(config["loss"]["warmup_steps"]), ramp_steps=int(config["loss"]["ramp_steps"]), lambda_mono=float(config["loss"]["lambda_mono"]), lambda_progress=float(config["loss"]["lambda_progress"]))
             student, regularizer = _student_velocity(intervention, legacy, state, timestep, cache, conditioning[sample.sample_id]["edit"], base, args.device, pair.first, sigma, None)
             if pair.second is None:
-                losses = velocity_losses(v_student=student, v_edit=v_edit, v_neutral=v_neutral, strength=pair.first, lambda_mono=mono_weight, lambda_progress=progress_weight, lambda_reg=float(config["loss"]["lambda_reg"]), regularizer=regularizer, margin=float(config["loss"]["margin"]), eps=float(config["loss"]["epsilon"]))
+                losses = velocity_losses(v_student=student, v_edit=v_edit, v_neutral=v_neutral, strength=pair.first, lambda_mono=mono_weight, lambda_progress=progress_weight, lambda_reg=float(config["loss"]["lambda_reg"]), regularizer=regularizer, margin=float(config["loss"]["margin"]), eps=float(config["loss"]["epsilon"]), token_weights=token_weights)
             else:
                 # Two simultaneous 1024px FLUX autograd graphs exceed one H20.
                 # Backpropagate the lower-strength objective first, then use
                 # its detached q as the monotonic boundary for the upper s.
-                first_losses = velocity_losses(v_student=student, v_edit=v_edit, v_neutral=v_neutral, strength=pair.first, lambda_progress=0.5 * progress_weight, lambda_reg=0.5 * float(config["loss"]["lambda_reg"]), regularizer=regularizer, margin=float(config["loss"]["margin"]), eps=float(config["loss"]["epsilon"]))
+                first_losses = velocity_losses(v_student=student, v_edit=v_edit, v_neutral=v_neutral, strength=pair.first, lambda_progress=0.5 * progress_weight, lambda_reg=0.5 * float(config["loss"]["lambda_reg"]), regularizer=regularizer, margin=float(config["loss"]["margin"]), eps=float(config["loss"]["epsilon"]), token_weights=token_weights)
                 q_first, direction_norm = progress_q(student, v_edit, v_neutral, float(config["loss"]["epsilon"]))
                 q_first_detached = q_first.detach()
                 first_metrics = [{**item, "student_strength": pair.first} for item in intervention.detached_metrics()]
@@ -401,7 +438,7 @@ def do_train(config: dict[str, Any], args: argparse.Namespace) -> None:
                 del student, regularizer, first_losses, q_first
 
                 second_student, second_regularizer = _student_velocity(intervention, legacy, state, timestep, cache, conditioning[sample.sample_id]["edit"], base, args.device, pair.second, sigma, None)
-                second_losses = velocity_losses(v_student=second_student, v_edit=v_edit, v_neutral=v_neutral, strength=pair.second, lambda_progress=0.5 * progress_weight, lambda_reg=0.5 * float(config["loss"]["lambda_reg"]), regularizer=second_regularizer, margin=float(config["loss"]["margin"]), eps=float(config["loss"]["epsilon"]))
+                second_losses = velocity_losses(v_student=second_student, v_edit=v_edit, v_neutral=v_neutral, strength=pair.second, lambda_progress=0.5 * progress_weight, lambda_reg=0.5 * float(config["loss"]["lambda_reg"]), regularizer=second_regularizer, margin=float(config["loss"]["margin"]), eps=float(config["loss"]["epsilon"]), token_weights=token_weights)
                 q_second, _ = progress_q(second_student, v_edit, v_neutral, float(config["loss"]["epsilon"]))
                 valid = direction_norm > float(config["loss"]["epsilon"])
                 monotonic = torch.relu(q_first_detached[valid] - q_second[valid] + float(config["loss"]["margin"])).mean() if valid.any() else second_losses["total"].new_zeros(())
@@ -413,6 +450,8 @@ def do_train(config: dict[str, Any], args: argparse.Namespace) -> None:
                     "total": first_values["total"] + second_total.detach(),
                     "velocity": first_values["velocity"],
                     "second_velocity": second_losses["velocity"].detach(),
+                    "velocity_global": first_values["velocity_global"],
+                    "second_velocity_global": second_losses["velocity_global"].detach(),
                     "monotonic": monotonic.detach(),
                     "progress": 0.5 * (first_values["progress"] + second_losses["progress"].detach()),
                     "regularizer": 0.5 * (first_values["regularizer"] + second_losses["regularizer"].detach()),
@@ -514,9 +553,7 @@ def _rollout_strength(
 def do_evaluate(config: dict[str, Any], args: argparse.Namespace) -> None:
     assert_diffusers_checkout(REPO_ROOT)
     root = initialize_run(config, args.resume)
-    samples = load_metadata(config["metadata_path"])
-    if config.get("sample_limit") is not None:
-        samples = samples[: int(config["sample_limit"])]
+    samples = selected_samples(config)
     base = base_sampling_config(config)
     pipeline = load_pipeline(base, args.device)
     configure_pipeline(pipeline, config)
@@ -534,7 +571,7 @@ def do_evaluate(config: dict[str, Any], args: argparse.Namespace) -> None:
         }
         rollout_seeds = sample.rollout_seeds[:1] if args.quick_eval else sample.rollout_seeds
         for seed in rollout_seeds:
-            cache = torch.load(cache_path(root, sample.sample_id, seed), map_location="cpu", weights_only=False)
+            cache = torch.load(cache_path(state_cache_root(config, root), sample.sample_id, seed), map_location="cpu", weights_only=False)
             intervention = _build_intervention(config, cache, pipeline, legacy)
             _restore_intervention(intervention, checkpoint, legacy)
             width = int(sample.resolved_width or 1024)

@@ -105,6 +105,17 @@ def write_summary_csv(path: str | Path, rows: list[dict[str, Any]]) -> None:
 class PerceptualModels:
     """Lazy local DINO/CLIP/LPIPS evaluator. Network download is disabled."""
 
+    @staticmethod
+    def _resolve_local_model_dir(path: str) -> str:
+        candidate = Path(path)
+        if (candidate / "preprocessor_config.json").is_file():
+            return str(candidate)
+        snapshots = sorted((candidate / "snapshots").glob("*")) if candidate.is_dir() else []
+        valid = [item for item in snapshots if (item / "preprocessor_config.json").is_file()]
+        if len(valid) == 1:
+            return str(valid[0])
+        raise FileNotFoundError(f"local processor files were not found under {candidate}")
+
     def __init__(
         self,
         *,
@@ -116,6 +127,8 @@ class PerceptualModels:
         import lpips
 
         self.device = torch.device(device)
+        dino_path = self._resolve_local_model_dir(dino_path)
+        clip_path = self._resolve_local_model_dir(clip_path)
         self.dino_processor = AutoImageProcessor.from_pretrained(dino_path, local_files_only=True)
         self.dino = AutoModel.from_pretrained(dino_path, local_files_only=True).to(self.device).eval().requires_grad_(False)
         self.clip_processor = CLIPProcessor.from_pretrained(clip_path, local_files_only=True)
