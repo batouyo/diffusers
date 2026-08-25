@@ -1,0 +1,5 @@
+degenerate_or_invalid_samples,encoder,median_antithetic_sign_agreement,median_delta_spearman,median_early_response_range,median_final_response_range,median_overall_spearman,samples,subgroup,timestep_mode
+0,clip,0.65625,0.4029411764705882,0.1747215986251831,0.1658599078655243,0.29930351906158353,8,appearance_like,first_only
+0,clip,0.625,0.26470588235294124,0.21221747994422913,0.36888664960861206,0.2382697947214076,8,structural_discrete,first_only
+0,clip,0.625,0.3602941176470588,0.19121220707893372,0.1850154995918274,0.472140762463343,8,appearance_like,first_two
+0,clip,0.71875,0.6764705882352942,0.2912241518497467,0.37694862484931946,0.5597507331378299,8,structural_discrete,first_two
