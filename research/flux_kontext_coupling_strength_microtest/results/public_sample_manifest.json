@@ -1,0 +1,35 @@
+[
+  {
+    "sample_id": "magicbrush_17320_turn1_color_ball",
+    "row_index": 43,
+    "img_id": 17320,
+    "turn_index": 1,
+    "instruction": "change the green ball to blue",
+    "edit_type": "local_color"
+  },
+  {
+    "sample_id": "magicbrush_259097_turn3_green_grass",
+    "row_index": 0,
+    "img_id": 259097,
+    "turn_index": 3,
+    "instruction": "Make all the grass green.",
+    "edit_type": "scene_ground_color"
+  },
+  {
+    "sample_id": "magicbrush_209923_turn1_steel_cabinetry",
+    "row_index": 42,
+    "img_id": 209923,
+    "turn_index": 1,
+    "instruction": "change the wooden cabinetry to steel",
+    "edit_type": "material"
+  },
+  {
+    "sample_id": "magicbrush_557573_turn2_nighttime",
+    "row_index": 100,
+    "img_id": 557573,
+    "turn_index": 2,
+    "instruction": "make it nighttime",
+    "edit_type": "appearance_lighting"
+  }
+]
+

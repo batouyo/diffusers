@@ -1,0 +1,21 @@
+{
+  "experiment": "FLUX-Kontext Coupling-as-Strength 4-Sample Go/No-Go Micro-Test",
+  "resolution": [1024, 1024],
+  "steps": 28,
+  "guidance_scale": 3.5,
+  "rho_values": [1.0, 0.75, 0.5, 0.25, 0.0],
+  "stochastic_seed_slots": [0, 1, 2],
+  "experiment_seed": 20260828,
+  "identity_instruction": "Keep the image unchanged.",
+  "primary_encoder": "facebook/dinov2-base",
+  "optional_encoder": "CLIP image encoder when available",
+  "mask_policy": "MagicBrush mask pixels below 128 are edit-region pixels",
+  "roi_expansion_factor": 1.125,
+  "roi_full_image_area_threshold": 0.60,
+  "coupling_window": "earliest three non-zero-diffusion scheduler steps",
+  "sde_formula_version": "syncsde_rf_equivalent_v1_explicit_noise",
+  "raw_result_rows": 60,
+  "per_seed_rows": 12,
+  "per_sample_rows": 4
+}
+

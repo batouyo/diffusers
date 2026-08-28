@@ -1,0 +1,191 @@
+{
+  "coupling_diffusion_coefficients": [
+    1.4416153397058284,
+    1.0263281705019067,
+    0.843648175695709
+  ],
+  "coupling_sigmas": [
+    0.988408625125885,
+    0.9762224555015564,
+    0.9633944034576416
+  ],
+  "coupling_step_indices": [
+    1,
+    2,
+    3
+  ],
+  "first_coefficient_exact_zero": true,
+  "sigmas_strictly_decreasing": true,
+  "steps": [
+    {
+      "diffusion_coeff": 0.0,
+      "index": 0,
+      "sigma": 1.0,
+      "sigma_next": 0.988408625125885
+    },
+    {
+      "diffusion_coeff": 1.4416153397058284,
+      "index": 1,
+      "sigma": 0.988408625125885,
+      "sigma_next": 0.9762224555015564
+    },
+    {
+      "diffusion_coeff": 1.0263281705019067,
+      "index": 2,
+      "sigma": 0.9762224555015564,
+      "sigma_next": 0.9633944034576416
+    },
+    {
+      "diffusion_coeff": 0.843648175695709,
+      "index": 3,
+      "sigma": 0.9633944034576416,
+      "sigma_next": 0.9498725533485413
+    },
+    {
+      "diffusion_coeff": 0.7354908907268861,
+      "index": 4,
+      "sigma": 0.9498725533485413,
+      "sigma_next": 0.9355989098548889
+    },
+    {
+      "diffusion_coeff": 0.6621506986297258,
+      "index": 5,
+      "sigma": 0.9355989098548889,
+      "sigma_next": 0.9205089807510376
+    },
+    {
+      "diffusion_coeff": 0.6083228630814664,
+      "index": 6,
+      "sigma": 0.9205089807510376,
+      "sigma_next": 0.9045307636260986
+    },
+    {
+      "diffusion_coeff": 0.5666900343054957,
+      "index": 7,
+      "sigma": 0.9045307636260986,
+      "sigma_next": 0.8875834345817566
+    },
+    {
+      "diffusion_coeff": 0.53325059748324,
+      "index": 8,
+      "sigma": 0.8875834345817566,
+      "sigma_next": 0.8695759177207947
+    },
+    {
+      "diffusion_coeff": 0.5055957984755186,
+      "index": 9,
+      "sigma": 0.8695759177207947,
+      "sigma_next": 0.8504056930541992
+    },
+    {
+      "diffusion_coeff": 0.48218041105847076,
+      "index": 10,
+      "sigma": 0.8504056930541992,
+      "sigma_next": 0.8299564123153687
+    },
+    {
+      "diffusion_coeff": 0.4619516310593102,
+      "index": 11,
+      "sigma": 0.8299564123153687,
+      "sigma_next": 0.8080955147743225
+    },
+    {
+      "diffusion_coeff": 0.44415390012337075,
+      "index": 12,
+      "sigma": 0.8080955147743225,
+      "sigma_next": 0.7846716046333313
+    },
+    {
+      "diffusion_coeff": 0.42822243580903996,
+      "index": 13,
+      "sigma": 0.7846716046333313,
+      "sigma_next": 0.7595109343528748
+    },
+    {
+      "diffusion_coeff": 0.41371752745978085,
+      "index": 14,
+      "sigma": 0.7595109343528748,
+      "sigma_next": 0.7324128150939941
+    },
+    {
+      "diffusion_coeff": 0.4002740824888547,
+      "index": 15,
+      "sigma": 0.7324128150939941,
+      "sigma_next": 0.7031447291374207
+    },
+    {
+      "diffusion_coeff": 0.3875810002793557,
+      "index": 16,
+      "sigma": 0.7031447291374207,
+      "sigma_next": 0.6714348196983337
+    },
+    {
+      "diffusion_coeff": 0.37534342701038487,
+      "index": 17,
+      "sigma": 0.6714348196983337,
+      "sigma_next": 0.6369644999504089
+    },
+    {
+      "diffusion_coeff": 0.3632762161692856,
+      "index": 18,
+      "sigma": 0.6369644999504089,
+      "sigma_next": 0.5993567109107971
+    },
+    {
+      "diffusion_coeff": 0.3510709560076278,
+      "index": 19,
+      "sigma": 0.5993567109107971,
+      "sigma_next": 0.5581628680229187
+    },
+    {
+      "diffusion_coeff": 0.33837883710099154,
+      "index": 20,
+      "sigma": 0.5581628680229187,
+      "sigma_next": 0.5128441452980042
+    },
+    {
+      "diffusion_coeff": 0.32476866542951643,
+      "index": 21,
+      "sigma": 0.5128441452980042,
+      "sigma_next": 0.4627484083175659
+    },
+    {
+      "diffusion_coeff": 0.30967717264009403,
+      "index": 22,
+      "sigma": 0.4627484083175659,
+      "sigma_next": 0.40707841515541077
+    },
+    {
+      "diffusion_coeff": 0.2923166184135407,
+      "index": 23,
+      "sigma": 0.40707841515541077,
+      "sigma_next": 0.3448489308357239
+    },
+    {
+      "diffusion_coeff": 0.2715017874111554,
+      "index": 24,
+      "sigma": 0.3448489308357239,
+      "sigma_next": 0.2748279869556427
+    },
+    {
+      "diffusion_coeff": 0.24528016068448596,
+      "index": 25,
+      "sigma": 0.2748279869556427,
+      "sigma_next": 0.19545459747314453
+    },
+    {
+      "diffusion_coeff": 0.20996503257832452,
+      "index": 26,
+      "sigma": 0.19545459747314453,
+      "sigma_next": 0.10472089797258377
+    },
+    {
+      "diffusion_coeff": 0.1565197450650203,
+      "index": 27,
+      "sigma": 0.10472089797258377,
+      "sigma_next": 0.0
+    }
+  ],
+  "terminal_sigma": 0.0
+}
+

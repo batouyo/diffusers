@@ -1,0 +1,127 @@
+{
+  "dino_endpoint_checks": [
+    {
+      "global_degenerate": false,
+      "global_denominator": 0.022020157426595688,
+      "global_source_progress": 0.0,
+      "global_target_progress": 0.9999996423721313,
+      "roi_degenerate": false,
+      "roi_denominator": 0.022020157426595688,
+      "roi_source_progress": 0.0,
+      "roi_target_progress": 0.9999996423721313,
+      "sample_id": "magicbrush_17320_turn1_color_ball"
+    },
+    {
+      "global_degenerate": false,
+      "global_denominator": 0.6395909786224365,
+      "global_source_progress": 0.0,
+      "global_target_progress": 1.0,
+      "roi_degenerate": false,
+      "roi_denominator": 1.0102511644363403,
+      "roi_source_progress": 0.0,
+      "roi_target_progress": 1.0000001192092896,
+      "sample_id": "magicbrush_259097_turn3_green_grass"
+    },
+    {
+      "global_degenerate": false,
+      "global_denominator": 0.14933431148529053,
+      "global_source_progress": 0.0,
+      "global_target_progress": 0.9999998807907104,
+      "roi_degenerate": false,
+      "roi_denominator": 0.14933431148529053,
+      "roi_source_progress": 0.0,
+      "roi_target_progress": 0.9999998807907104,
+      "sample_id": "magicbrush_209923_turn1_steel_cabinetry"
+    },
+    {
+      "global_degenerate": false,
+      "global_denominator": 0.07857469469308853,
+      "global_source_progress": 0.0,
+      "global_target_progress": 1.0000001192092896,
+      "roi_degenerate": false,
+      "roi_denominator": 0.07857469469308853,
+      "roi_source_progress": 0.0,
+      "roi_target_progress": 1.0000001192092896,
+      "sample_id": "magicbrush_557573_turn2_nighttime"
+    }
+  ],
+  "samples": [
+    {
+      "mask_area_ratio": 0.41428375244140625,
+      "mask_bbox": [
+        0,
+        0,
+        1024,
+        1024
+      ],
+      "normal_rgb_crop": true,
+      "roi_bbox": [
+        0,
+        0,
+        1024,
+        1024
+      ],
+      "roi_uses_full_image": false,
+      "sample_id": "magicbrush_17320_turn1_color_ball",
+      "source_target_output_coordinates_identical_by_policy": true
+    },
+    {
+      "mask_area_ratio": 0.47539710998535156,
+      "mask_bbox": [
+        0,
+        511,
+        1024,
+        1024
+      ],
+      "normal_rgb_crop": true,
+      "roi_bbox": [
+        0,
+        478,
+        1024,
+        1024
+      ],
+      "roi_uses_full_image": false,
+      "sample_id": "magicbrush_259097_turn3_green_grass",
+      "source_target_output_coordinates_identical_by_policy": true
+    },
+    {
+      "mask_area_ratio": 0.7262105941772461,
+      "mask_bbox": [
+        0,
+        0,
+        1024,
+        1024
+      ],
+      "normal_rgb_crop": true,
+      "roi_bbox": [
+        0,
+        0,
+        1024,
+        1024
+      ],
+      "roi_uses_full_image": true,
+      "sample_id": "magicbrush_209923_turn1_steel_cabinetry",
+      "source_target_output_coordinates_identical_by_policy": true
+    },
+    {
+      "mask_area_ratio": 0.8979330062866211,
+      "mask_bbox": [
+        0,
+        0,
+        1024,
+        1024
+      ],
+      "normal_rgb_crop": true,
+      "roi_bbox": [
+        0,
+        0,
+        1024,
+        1024
+      ],
+      "roi_uses_full_image": true,
+      "sample_id": "magicbrush_557573_turn2_nighttime",
+      "source_target_output_coordinates_identical_by_policy": true
+    }
+  ]
+}
+

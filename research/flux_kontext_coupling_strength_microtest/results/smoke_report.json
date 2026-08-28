@@ -1,0 +1,29 @@
+{
+  "all_metrics_finite": true,
+  "coupling_indices": [
+    1,
+    2,
+    3
+  ],
+  "cuda_peak_memory": {
+    "max_memory_allocated_bytes": 44747031552,
+    "max_memory_allocated_gib": 41.67392063140869,
+    "max_memory_reserved_bytes": 50000297984,
+    "max_memory_reserved_gib": 46.56640625
+  },
+  "first_step_deterministic": true,
+  "independent_basis_hash_sets": [
+    "[\"5c5e965d4034656c265216311605b7c90f1fa02461cc3114723e1b27c8c939b8\", \"1035452773ae5542140cf5f82140805389d77240df77fdcde4a4bca8adca313a\", \"c9a085697b1956bddec42d909d55b5a07db32590185d3d109fc0dfad186a2e52\"]"
+  ],
+  "initial_latent_hashes": [
+    "f81146828da75216a025caf12d4f68abf6692dbddc96fc0e957732f4eb11e74b"
+  ],
+  "objective_metric_rows": 3,
+  "rows": 3,
+  "shared_basis_hash_sets": [
+    "[\"2afd18c9f226c4853af6606d72a9ecdf0b5d1795e4d61ba67e599237b9d8b878\", \"4e34e943ab4eed7bced8803db55548a478d2bd53cfc5138f75eb919009a5793e\", \"d0709200aca9e1583c3bca4f4eded52cddf1c81776c4f9bd0590955c254a3af6\"]"
+  ],
+  "source_conditioning_unchanged": true,
+  "status": "METRICS_FINITE_PENDING_VISUAL_REVIEW"
+}
+

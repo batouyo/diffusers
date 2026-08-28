@@ -1,0 +1,58 @@
+{
+  "basis_hashes_reused_across_rho": true,
+  "different_stream_distinct": true,
+  "repeat_bitwise_identical": true,
+  "rows": [
+    {
+      "edit_empirical_correlation": 1.0,
+      "independent_hash": "52a3c4f77a8579f67666ebc9b00255802bbe62de7f28b121b88f9fa511b5eeb3",
+      "preserve_empirical_correlation": 0.9999999999999998,
+      "rho": 1.0,
+      "shared_hash": "517bbd24c884d46f21a440c67d66519860751349b8a3a5cca963af2d839ccb40",
+      "target_hash": "517bbd24c884d46f21a440c67d66519860751349b8a3a5cca963af2d839ccb40",
+      "target_mean": 0.0037025799974799156,
+      "target_std": 0.9993088841438293
+    },
+    {
+      "edit_empirical_correlation": 0.7504525109642325,
+      "independent_hash": "52a3c4f77a8579f67666ebc9b00255802bbe62de7f28b121b88f9fa511b5eeb3",
+      "preserve_empirical_correlation": 0.9999999999999998,
+      "rho": 0.75,
+      "shared_hash": "517bbd24c884d46f21a440c67d66519860751349b8a3a5cca963af2d839ccb40",
+      "target_hash": "13f886f5e82a1e0201b6c9c56f129f40cb5a0b136d0382a7091253bd31568d67",
+      "target_mean": 0.005192228592932224,
+      "target_std": 0.9993845224380493
+    },
+    {
+      "edit_empirical_correlation": 0.5007881473531183,
+      "independent_hash": "52a3c4f77a8579f67666ebc9b00255802bbe62de7f28b121b88f9fa511b5eeb3",
+      "preserve_empirical_correlation": 0.9999999999999998,
+      "rho": 0.5,
+      "shared_hash": "517bbd24c884d46f21a440c67d66519860751349b8a3a5cca963af2d839ccb40",
+      "target_hash": "75308571e2c61fab09f70d068f78046168d2039b94718cc879a013f3087b0600",
+      "target_mean": 0.005219380371272564,
+      "target_std": 0.9992600083351135
+    },
+    {
+      "edit_empirical_correlation": 0.2509192002909953,
+      "independent_hash": "52a3c4f77a8579f67666ebc9b00255802bbe62de7f28b121b88f9fa511b5eeb3",
+      "preserve_empirical_correlation": 0.9999999999999998,
+      "rho": 0.25,
+      "shared_hash": "517bbd24c884d46f21a440c67d66519860751349b8a3a5cca963af2d839ccb40",
+      "target_hash": "f5ba834b78018f3acb8470a11e4da2b449fd3861f746d1a8ecfa8e91e1e146ba",
+      "target_mean": 0.00491882860660553,
+      "target_std": 0.999119758605957
+    },
+    {
+      "edit_empirical_correlation": 0.0008501092495668103,
+      "independent_hash": "52a3c4f77a8579f67666ebc9b00255802bbe62de7f28b121b88f9fa511b5eeb3",
+      "preserve_empirical_correlation": 0.9999999999999998,
+      "rho": 0.0,
+      "shared_hash": "517bbd24c884d46f21a440c67d66519860751349b8a3a5cca963af2d839ccb40",
+      "target_hash": "4c92c2d09ed818d48d8f581f48b84c5d69cc7451e8c647c98a5d68bcaee84a76",
+      "target_mean": 0.004392695147544146,
+      "target_std": 0.9989966750144958
+    }
+  ]
+}
+

@@ -1,0 +1,113 @@
+{
+  "samples": [
+    {
+      "binary_values": [
+        0.0,
+        1.0
+      ],
+      "edit_preserve_complement": true,
+      "image_mask_shape": [
+        1024,
+        1024
+      ],
+      "latent_mask_shape": [
+        1,
+        16,
+        128,
+        128
+      ],
+      "packed_channels": 64,
+      "packed_hash": "4e660cad1b1b87a8ed7da2c726e0f38fa43b29022f6e80014c4e4b3261a69ed3",
+      "packed_mask_shape": [
+        1,
+        4096,
+        64
+      ],
+      "packed_reconstruction_exact": true,
+      "packed_token_count": 4096,
+      "sample_id": "magicbrush_17320_turn1_color_ball"
+    },
+    {
+      "binary_values": [
+        0.0,
+        1.0
+      ],
+      "edit_preserve_complement": true,
+      "image_mask_shape": [
+        1024,
+        1024
+      ],
+      "latent_mask_shape": [
+        1,
+        16,
+        128,
+        128
+      ],
+      "packed_channels": 64,
+      "packed_hash": "e96025f365c42c6dea6b83326aa0c1d542e03b949771e6cc1472589a79525efb",
+      "packed_mask_shape": [
+        1,
+        4096,
+        64
+      ],
+      "packed_reconstruction_exact": true,
+      "packed_token_count": 4096,
+      "sample_id": "magicbrush_259097_turn3_green_grass"
+    },
+    {
+      "binary_values": [
+        0.0,
+        1.0
+      ],
+      "edit_preserve_complement": true,
+      "image_mask_shape": [
+        1024,
+        1024
+      ],
+      "latent_mask_shape": [
+        1,
+        16,
+        128,
+        128
+      ],
+      "packed_channels": 64,
+      "packed_hash": "224b551be363e00c66ebc9eed42ca0bfd8d42a639da220fa71f159f56cca2514",
+      "packed_mask_shape": [
+        1,
+        4096,
+        64
+      ],
+      "packed_reconstruction_exact": true,
+      "packed_token_count": 4096,
+      "sample_id": "magicbrush_209923_turn1_steel_cabinetry"
+    },
+    {
+      "binary_values": [
+        0.0,
+        1.0
+      ],
+      "edit_preserve_complement": true,
+      "image_mask_shape": [
+        1024,
+        1024
+      ],
+      "latent_mask_shape": [
+        1,
+        16,
+        128,
+        128
+      ],
+      "packed_channels": 64,
+      "packed_hash": "ccd4bfa9d4be994df49e9affbd6b52702f0eab18bd99a57b3ff56a8aa4af6dcd",
+      "packed_mask_shape": [
+        1,
+        4096,
+        64
+      ],
+      "packed_reconstruction_exact": true,
+      "packed_token_count": 4096,
+      "sample_id": "magicbrush_557573_turn2_nighttime"
+    }
+  ]
+}
+
