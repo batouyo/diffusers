@@ -1,0 +1,24 @@
+{
+  "status": "NATIVE_BASELINE_INCONCLUSIVE",
+  "samples": [
+    {
+      "candidate": "native_candidate_0",
+      "status": "FAIL",
+      "q_global": 0.2595001757144928,
+      "q_roi": 0.2595001757144928,
+      "source_target_edit_l1": 0.08801185339689255,
+      "output_target_edit_improvement": -0.1583414216957372,
+      "preserve_l1_vs_source": 0.011756819672882557
+    },
+    {
+      "candidate": "native_candidate_1",
+      "status": "FAIL",
+      "q_global": 0.23390015959739685,
+      "q_roi": 0.23390015959739685,
+      "source_target_edit_l1": 0.11330381780862808,
+      "output_target_edit_improvement": -0.22445039673483402,
+      "preserve_l1_vs_source": 0.017999792471528053
+    }
+  ]
+}
+

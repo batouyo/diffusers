@@ -1,0 +1,23 @@
+{
+  "repository": "batouyo/diffusers",
+  "branch": "codex/early-response-results",
+  "commit": "db7837a27ed9cfd35d721745996a13abe70a6532",
+  "run_temporal_probe_blob": "cdb1bf18cceb5b8c84da7817bb001cc1651f371b",
+  "run_early_response_probe_blob": "96305728c948a661a2134e69208c2e87a4f13ebb",
+  "formula": "Exact archived TempFlow-style one-step SDE with deterministic Kontext ODE suffix",
+  "historical_replay": {
+    "dataset_source_and_content_fingerprint": "supplied at runtime; intentionally not published",
+    "steps": 9,
+    "guidance": 3.5,
+    "scale": 0.7,
+    "perturbation_step": 0,
+    "branch_index": 0,
+    "branches_generated_for_rng_shape": 4,
+    "archived_metrics": {
+      "local_latent_l2": 379.8421,
+      "final_latent_l2": 432.1966,
+      "final_pixel_rms_to_ode": 0.25398
+    }
+  }
+}
+

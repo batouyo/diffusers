@@ -1,0 +1,7 @@
+{
+  "status": "PASS",
+  "steps": 28,
+  "max_abs_difference": 0.0,
+  "scheduler_class": "FlowMatchEulerDiscreteScheduler"
+}
+

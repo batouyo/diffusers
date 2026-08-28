@@ -1,0 +1,23 @@
+{
+  "status": "NATIVE_BASELINE_INCONCLUSIVE",
+  "full_diagnostic_executed": false,
+  "stop_reason": "Both pre-registered native ODE candidates failed the fixed target-edit L1 improvement gate; C, D and E were not run.",
+  "executed_groups": [
+    "validation",
+    "A_native_ode_gate"
+  ],
+  "not_executed_groups": [
+    "B_historical",
+    "B_matched",
+    "C_local_early_rf_sde",
+    "D_ode_suffix_counterfactual",
+    "E_global_all_stochastic_rf_sde"
+  ],
+  "deterministic_scheduler_equivalence": {
+    "status": "PASS",
+    "steps": 28,
+    "max_abs_difference": 0.0,
+    "scheduler_class": "FlowMatchEulerDiscreteScheduler"
+  }
+}
+
