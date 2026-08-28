@@ -1,0 +1,38 @@
+{
+  "actual": {
+    "final_latent_l2": 460.8129577636719,
+    "final_pixel_rms_to_ode": 0.2756655216217041,
+    "local_latent_l2": 378.4915466308594
+  },
+  "base_seed": 20260723,
+  "branches_generated_for_rng_shape": 4,
+  "errors": {
+    "final_relative": 0.06621143656306386,
+    "local_relative": 0.0035555652444545804,
+    "pixel_absolute": 0.021685521621704118
+  },
+  "expected": {
+    "final_latent_l2": 432.1966,
+    "final_pixel_rms_to_ode": 0.25398,
+    "local_latent_l2": 379.8421
+  },
+  "guidance": 3.5,
+  "historical_source_sha256_verified": true,
+  "provenance": {
+    "branch": "codex/early-response-results",
+    "commit": "db7837a27ed9cfd35d721745996a13abe70a6532",
+    "formula": "TempFlow-style mean/std, one SDE step then deterministic Kontext ODE suffix",
+    "function": "sde_step_with_noise",
+    "repository": "batouyo/diffusers",
+    "source_blob": "96305728c948a661a2134e69208c2e87a4f13ebb"
+  },
+  "scale": 0.7,
+  "selected_branch": 0,
+  "status": "ENVIRONMENT_OR_VERSION_REPRODUCTION_FAILED",
+  "steps": 9,
+  "tolerances": {
+    "final_relative": 0.05,
+    "local_relative": 0.01,
+    "pixel_absolute": 0.02
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "C_post_window_median_difference_ratio": 0.9407422250829943,
+  "C_strong_contraction": true,
+  "D_amplifies": false,
+  "D_preserves": false,
+  "E_max_directional_progress_delta": 0.27874191105365753,
+  "E_target_aligned_semantic_leverage": true,
+  "RF_SDE_BASELINE_EDITING_DEGRADATION": true,
+  "R_C": 0.19554798357649805,
+  "R_D": 0.2660694885984048,
+  "supports_rf_suffix_washout": false
+}

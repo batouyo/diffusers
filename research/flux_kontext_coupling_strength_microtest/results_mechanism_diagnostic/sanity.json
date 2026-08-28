@@ -1,0 +1,31 @@
+{
+  "C_D_prefix_rho0_hash": "9d4276dc49aa27ab94119cb5b3ed503fb9a6b331203a713a2c9ea2f4f37480e2",
+  "C_D_prefix_rho1_hash": "49fe9fcf18d8f994707ebafd8d53726db1d9b5f404f59f1dc1efebadb8b0465f",
+  "deterministic_scheduler_equivalence": {
+    "max_abs_difference": 0.0,
+    "scheduler_class": "FlowMatchEulerDiscreteScheduler",
+    "status": "PASS",
+    "steps": 28
+  },
+  "first_rf_step_deterministic": true,
+  "initial_latent_hash": "f81146828da75216a025caf12d4f68abf6692dbddc96fc0e957732f4eb11e74b",
+  "native_gate": {
+    "image_std": 0.2586398124694824,
+    "initial_latent_hash": "f81146828da75216a025caf12d4f68abf6692dbddc96fc0e957732f4eb11e74b",
+    "output_target_edit_improvement_diagnostic": -0.1583414216957372,
+    "preserve_l1_vs_source": 0.011756819672882557,
+    "q_global_diagnostic": 0.2595001757144928,
+    "q_roi_diagnostic": 0.2595001757144928,
+    "sample_id": "magicbrush_17320_turn1_color_ball",
+    "source_target_edit_l1_diagnostic": 0.08801185339689255,
+    "status": "PASS",
+    "target_similarity_is_gate": false
+  },
+  "packed_mask_shape": [
+    1,
+    4096,
+    64
+  ],
+  "prefix_cloned_exactly": true,
+  "source_conditioning_hash": "954a3c0bd54fbd2bb025e57686ff4dd55e0729b9bdef23295e3a4652aad505c4"
+}

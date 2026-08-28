@@ -1,23 +1,16 @@
 {
-  "status": "NATIVE_BASELINE_INCONCLUSIVE",
-  "full_diagnostic_executed": false,
-  "stop_reason": "Both pre-registered native ODE candidates failed the fixed target-edit L1 improvement gate; C, D and E were not run.",
-  "executed_groups": [
-    "validation",
-    "A_native_ode_gate"
+  "metric_rows": 8,
+  "outputs": [
+    "A_native_ode",
+    "B_old_sde_perturbed",
+    "C_rf_sde_rho1",
+    "C_rf_sde_rho0",
+    "D_ode_suffix_rho1",
+    "D_ode_suffix_rho0",
+    "E_rf_sde_rho1",
+    "E_rf_sde_rho0"
   ],
-  "not_executed_groups": [
-    "B_historical",
-    "B_matched",
-    "C_local_early_rf_sde",
-    "D_ode_suffix_counterfactual",
-    "E_global_all_stochastic_rf_sde"
-  ],
-  "deterministic_scheduler_equivalence": {
-    "status": "PASS",
-    "steps": 28,
-    "max_abs_difference": 0.0,
-    "scheduler_class": "FlowMatchEulerDiscreteScheduler"
-  }
+  "sample_id": "magicbrush_17320_turn1_color_ball",
+  "status": "COMPLETE",
+  "trajectory_rows": 224
 }
-
