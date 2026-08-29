@@ -32,13 +32,14 @@ def select_pie_subset(root: str | Path, train_count: int = 16, test_count: int =
         parquet = next(category_dir.glob("*.parquet"), None) if category_dir.is_dir() else None
         if parquet is None: continue
         frame = pd.read_parquet(parquet)
-        indices = rng.permutation(len(frame))[:per_category]
-        for row_index in indices.tolist():
+        valid_rows = []
+        for row_index in range(len(frame)):
             row = frame.iloc[int(row_index)]; source = decode_image(row["image"])
             mask = parse_flat_mask(str(row["mask"]), source.size)
             area = float(np.asarray(mask).mean() / 255.0)
             if min_area <= area <= max_area:
-                candidates.append({"sample_id": f"pie_{category_dir.name}_{row['id']}", "category": category_dir.name, "shard": str(parquet), "row_index": int(row_index), "source": source, "mask": mask, "mask_area": area, "instruction": str(row["target_prompt"]), "source_prompt": str(row["source_prompt"]), "target_description": str(row["target_prompt"])})
+                valid_rows.append({"sample_id": f"pie_{category_dir.name}_{row['id']}", "category": category_dir.name, "shard": str(parquet), "row_index": int(row_index), "source": source, "mask": mask, "mask_area": area, "instruction": str(row["target_prompt"]), "source_prompt": str(row["source_prompt"]), "target_description": str(row["target_prompt"])})
+        candidates.extend(valid_rows[i] for i in rng.permutation(len(valid_rows))[:per_category].tolist())
     order = rng.permutation(len(candidates)).tolist(); selected = [candidates[i] for i in order[:train_count + test_count]]
     if len(selected) != train_count + test_count: raise RuntimeError(f"PIE-Bench contains only {len(selected)} selected records")
     return selected[:train_count], selected[train_count:]
