@@ -152,7 +152,7 @@ def branch_step(
     for index in range(candidates):
         outputs.append(rf_sde_step(latents, prediction, sigma, sigma_next, noise[index], first_step=step_index == 0)[0])
     coeff = 0.0 if step_index == 0 else float((2 * sigma / (1 - sigma) * (sigma - sigma_next)) ** 0.5)
-    return torch.stack(outputs), {"step_index": int(step_index), "timestep": float(timestep), "sigma": sigma, "sigma_next": sigma_next, "diffusion_coeff": coeff, "seed": int(seed), "shared_noise_shape": list(shared.shape), "candidate_noise_shape": list(independent.shape)}
+    return torch.cat(outputs, dim=0), {"step_index": int(step_index), "timestep": float(timestep), "sigma": sigma, "sigma_next": sigma_next, "diffusion_coeff": coeff, "seed": int(seed), "shared_noise_shape": list(shared.shape), "candidate_noise_shape": list(independent.shape)}
 
 
 @torch.inference_mode()
