@@ -1,0 +1,208 @@
+"""Model-backed FLUX-Kontext trajectory capture and regional SDE search.
+
+The module deliberately keeps the pipeline's native source-image conditioning:
+the generated tokens are the only tokens branched or masked.  The target
+resolution is explicit because Kontext's default source auto-resize is not the
+same operation as the generated image resolution.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any, Callable
+
+import numpy as np
+import torch
+from PIL import Image
+
+from .core import coupled_noise, critical_nonzero_steps, rf_sde_step
+from .resolution import resolve_dimensions
+
+
+@dataclass
+class KontextState:
+    latents: torch.Tensor
+    image_latents: torch.Tensor
+    image_ids: torch.Tensor
+    prompt_embeds: torch.Tensor
+    pooled_prompt_embeds: torch.Tensor
+    text_ids: torch.Tensor
+    timesteps: torch.Tensor
+    height: int
+    width: int
+    dtype: torch.dtype
+    metadata: dict[str, Any]
+
+
+def _schedule(pipe: Any, steps: int, device: torch.device, image_tokens: int) -> torch.Tensor:
+    from diffusers.pipelines.flux.pipeline_flux_kontext import calculate_shift, retrieve_timesteps
+
+    sigmas = np.linspace(1.0, 1.0 / steps, steps)
+    config = pipe.scheduler.config
+    mu = calculate_shift(
+        image_tokens,
+        config.get("base_image_seq_len", 256),
+        config.get("max_image_seq_len", 4096),
+        config.get("base_shift", 0.5),
+        config.get("max_shift", 1.15),
+    )
+    timesteps, _ = retrieve_timesteps(pipe.scheduler, steps, device, sigmas=sigmas, mu=mu)
+    return timesteps
+
+
+@torch.inference_mode()
+def prepare_state(
+    pipe: Any,
+    source: Image.Image,
+    instruction: str,
+    seed: int,
+    *,
+    height: int = 512,
+    width: int = 512,
+    steps: int = 28,
+    guidance_scale: float = 3.5,
+    device: torch.device | str = "cuda",
+) -> KontextState:
+    device = torch.device(device)
+    geometry = resolve_dimensions(height, width, int(pipe.vae_scale_factor))
+    height, width = geometry["resolved_height"], geometry["resolved_width"]
+    source = source.convert("RGB")
+    source_tensor = pipe.image_processor.preprocess(
+        pipe.image_processor.resize(source, height, width), height, width
+    )
+    prompt_embeds, pooled, text_ids = pipe.encode_prompt(
+        prompt=instruction, device=device, num_images_per_prompt=1, max_sequence_length=512
+    )
+    channels = pipe.transformer.config.in_channels // 4
+    generator = torch.Generator(device=device).manual_seed(int(seed))
+    latents, image_latents, latent_ids, image_ids = pipe.prepare_latents(
+        source_tensor, 1, channels, height, width, prompt_embeds.dtype, device, generator, None
+    )
+    if image_latents is None or image_ids is None:
+        raise RuntimeError("FLUX-Kontext did not return source image conditioning latents")
+    all_image_ids = torch.cat([latent_ids, image_ids], dim=0)
+    timesteps = _schedule(pipe, steps, device, latents.shape[1])
+    guidance = torch.full((latents.shape[0],), guidance_scale, device=device, dtype=torch.float32)
+    return KontextState(
+        latents=latents, image_latents=image_latents, image_ids=all_image_ids,
+        prompt_embeds=prompt_embeds, pooled_prompt_embeds=pooled, text_ids=text_ids,
+        timesteps=timesteps, height=height, width=width, dtype=latents.dtype,
+        metadata={"seed": int(seed), "guidance_scale": float(guidance_scale), "steps": int(steps),
+                  "resolution": geometry, "source_original_size": [source.width, source.height],
+                  "generated_tokens": int(latents.shape[1]),
+                  "source_conditioning_tokens": int(image_latents.shape[1]),
+                  "text_tokens": int(prompt_embeds.shape[1])},
+    )
+
+
+@torch.inference_mode()
+def velocity(pipe: Any, state: KontextState, latents: torch.Tensor, timestep: torch.Tensor) -> torch.Tensor:
+    batch = latents.shape[0]
+    image_latents = state.image_latents.repeat(batch, 1, 1)
+    image_ids = state.image_ids
+    if image_ids.shape[0] != state.latents.shape[1] + state.image_latents.shape[1]:
+        raise RuntimeError("image token ID layout is inconsistent with generated/source tokens")
+    output = pipe.transformer(
+        hidden_states=torch.cat([latents, image_latents], dim=1),
+        timestep=timestep.expand(batch).to(latents.dtype) / 1000,
+        guidance=torch.full((batch,), float(state.metadata["guidance_scale"]), device=latents.device),
+        pooled_projections=state.pooled_prompt_embeds.repeat(batch, 1),
+        encoder_hidden_states=state.prompt_embeds.repeat(batch, 1, 1),
+        txt_ids=state.text_ids,
+        img_ids=image_ids,
+        joint_attention_kwargs={},
+        return_dict=False,
+    )[0]
+    return output[:, : latents.shape[1]]
+
+
+def _sigmas(pipe: Any, timestep: torch.Tensor) -> tuple[float, float]:
+    index = int(pipe.scheduler.index_for_timestep(timestep))
+    values = pipe.scheduler.sigmas.detach().cpu().flatten()
+    return float(values[index]), float(values[index + 1])
+
+
+def ode_step(pipe: Any, latents: torch.Tensor, prediction: torch.Tensor, timestep: torch.Tensor) -> torch.Tensor:
+    sigma, next_sigma = _sigmas(pipe, timestep)
+    return (latents.float() + (next_sigma - sigma) * prediction.float()).to(latents.dtype)
+
+
+def branch_step(
+    pipe: Any,
+    state: KontextState,
+    latents: torch.Tensor,
+    step_index: int,
+    token_mask: torch.Tensor,
+    seed: int,
+    *,
+    candidates: int = 4,
+) -> tuple[torch.Tensor, dict[str, Any]]:
+    if candidates != 4:
+        raise ValueError("the minimal validation fixes K=4")
+    timestep = state.timesteps[step_index]
+    prediction = velocity(pipe, state, latents, timestep)
+    sigma, sigma_next = _sigmas(pipe, timestep)
+    generator = torch.Generator(device=latents.device).manual_seed(int(seed))
+    shared = torch.randn(latents.shape, generator=generator, device=latents.device, dtype=torch.float32)
+    independent = torch.randn((candidates,) + tuple(latents.shape[1:]), generator=generator, device=latents.device, dtype=torch.float32)
+    noise = coupled_noise(shared.expand_as(independent), independent, token_mask, rho=0.0)
+    outputs = []
+    for index in range(candidates):
+        outputs.append(rf_sde_step(latents, prediction, sigma, sigma_next, noise[index], first_step=step_index == 0)[0])
+    coeff = 0.0 if step_index == 0 else float((2 * sigma / (1 - sigma) * (sigma - sigma_next)) ** 0.5)
+    return torch.stack(outputs), {"step_index": int(step_index), "timestep": float(timestep), "sigma": sigma, "sigma_next": sigma_next, "diffusion_coeff": coeff, "seed": int(seed), "shared_noise_shape": list(shared.shape), "candidate_noise_shape": list(independent.shape)}
+
+
+@torch.inference_mode()
+def deterministic_rollout(pipe: Any, state: KontextState, candidates: torch.Tensor, start_step: int) -> torch.Tensor:
+    current = candidates
+    for index in range(start_step, len(state.timesteps)):
+        current = ode_step(pipe, current, velocity(pipe, state, current, state.timesteps[index]), state.timesteps[index])
+    return current
+
+
+@torch.inference_mode()
+def rollout_until(pipe: Any, state: KontextState, current: torch.Tensor, start_step: int, target_step: int) -> torch.Tensor:
+    """Advance to the requested branch state without stepping past it."""
+    for index in range(start_step, target_step):
+        current = ode_step(pipe, current, velocity(pipe, state, current, state.timesteps[index]), state.timesteps[index])
+    return current
+
+
+@torch.inference_mode()
+def two_stage_search(
+    pipe: Any,
+    state: KontextState,
+    token_mask: torch.Tensor,
+    score: Callable[[torch.Tensor], list[float]],
+    *,
+    seed: int,
+    repeat_score: Callable[[torch.Tensor], list[float]] | None = None,
+) -> tuple[torch.Tensor, list[dict[str, Any]]]:
+    selected = critical_nonzero_steps([float(x) for x in pipe.scheduler.sigmas.detach().cpu().flatten().tolist()])[:2]
+    if len(selected) < 2:
+        raise RuntimeError("scheduler exposed fewer than two non-zero diffusion transitions")
+    current = state.latents
+    current_step = 0
+    records = []
+    for stage, item in enumerate(selected, start=1):
+        step_index = int(item["index"])
+        current = rollout_until(pipe, state, current, current_step, step_index)
+        candidates, branch_meta = branch_step(pipe, state, current, step_index, token_mask, seed + stage)
+        terminal = deterministic_rollout(pipe, state, candidates, step_index + 1)
+        rewards = [float(x) for x in score(terminal)]
+        if len(rewards) != 4:
+            raise ValueError("score must return one value per candidate")
+        top2 = sorted(range(4), key=lambda index: (-rewards[index], index))[:2]
+        repeated = [float(x) for x in repeat_score(terminal[top2]) ] if repeat_score is not None else []
+        means = rewards[:]
+        if repeated:
+            if len(repeated) != 4:
+                raise ValueError("repeat_score must return two repeated scores per top-2 candidate")
+            for rank, index in enumerate(top2):
+                pair = repeated[2 * rank : 2 * rank + 2]
+                means[index] = (rewards[index] + pair[0] + pair[1]) / 3.0
+        winner = max(range(4), key=lambda index: (means[index], -index))
+        current = candidates[winner:winner + 1]
+        current_step = step_index + 1
+        records.append({"stage": stage, "branch_step_index": step_index, "post_branch_step_index": step_index + 1, "winner_index": winner, "rewards": rewards, "top2": top2, "repeated_rewards": repeated, "mean_rewards": means, **branch_meta})
+    return current, records
