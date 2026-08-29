@@ -8,7 +8,7 @@ from pathlib import Path
 import pandas as pd
 
 from early_edit_reward_distillation.pie import decode_image
-from early_edit_reward_distillation.resolution import resolve_dimensions
+from early_edit_reward_distillation.resolution import choose_preferred_source_size, resolve_dimensions
 
 
 def main() -> None:
@@ -25,7 +25,9 @@ def main() -> None:
         for item in json.loads(Path(manifest_path).read_text()):
             table = pd.read_parquet(item["shard"]).iloc[[int(item["row_index"])]]
             source = decode_image(table.iloc[0]["image"])
+            source_height, source_width = choose_preferred_source_size(source.height, source.width, args.vae_scale_factor)
             geometry = resolve_dimensions(args.height, args.width, args.vae_scale_factor)
+            source_geometry = resolve_dimensions(source_height, source_width, args.vae_scale_factor)
             records.append({
                 "sample_id": item["sample_id"],
                 "category": item.get("category", ""),
@@ -33,6 +35,9 @@ def main() -> None:
                 "row_index": item["row_index"],
                 "source_width": source.width,
                 "source_height": source.height,
+                "source_conditioning_height": source_geometry["resolved_height"],
+                "source_conditioning_width": source_geometry["resolved_width"],
+                "source_conditioning_tokens": source_geometry["generated_image_tokens"],
                 **geometry,
             })
     payload = {
