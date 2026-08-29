@@ -144,6 +144,9 @@ def branch_step(
     generator = torch.Generator(device=latents.device).manual_seed(int(seed))
     shared = torch.randn(latents.shape, generator=generator, device=latents.device, dtype=torch.float32)
     independent = torch.randn((candidates,) + tuple(latents.shape[1:]), generator=generator, device=latents.device, dtype=torch.float32)
+    token_mask = token_mask.reshape(1, -1)
+    if token_mask.shape[1] != latents.shape[1]:
+        raise ValueError(f"token mask length {token_mask.shape[1]} does not match generated tokens {latents.shape[1]}")
     noise = coupled_noise(shared.expand_as(independent), independent, token_mask, rho=0.0)
     outputs = []
     for index in range(candidates):
