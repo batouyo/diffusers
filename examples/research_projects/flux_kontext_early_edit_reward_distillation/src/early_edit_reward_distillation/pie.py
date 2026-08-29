@@ -27,7 +27,7 @@ def parse_flat_mask(encoded: str, size: tuple[int, int]) -> Image.Image:
     return Image.fromarray(flat.reshape(height, width), mode="L")
 
 def select_pie_subset(root: str | Path, train_count: int = 16, test_count: int = 8, seed: int = 20260830, per_category: int = 3, min_area: float = 0.02, max_area: float = 0.40) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
-    rng = np.random.default_rng(seed); candidates = []
+    rng = np.random.default_rng(seed); candidates = []; all_valid = []
     for category_dir in sorted(Path(root).iterdir()):
         parquet = next(category_dir.glob("*.parquet"), None) if category_dir.is_dir() else None
         if parquet is None: continue
@@ -39,7 +39,12 @@ def select_pie_subset(root: str | Path, train_count: int = 16, test_count: int =
             area = float(np.asarray(mask).mean() / 255.0)
             if min_area <= area <= max_area:
                 valid_rows.append({"sample_id": f"pie_{category_dir.name}_{row['id']}", "category": category_dir.name, "shard": str(parquet), "row_index": int(row_index), "source": source, "mask": mask, "mask_area": area, "instruction": str(row["target_prompt"]), "source_prompt": str(row["source_prompt"]), "target_description": str(row["target_prompt"])})
-        candidates.extend(valid_rows[i] for i in rng.permutation(len(valid_rows))[:per_category].tolist())
+        chosen = [valid_rows[i] for i in rng.permutation(len(valid_rows))[:per_category].tolist()]
+        candidates.extend(chosen); all_valid.extend(valid_rows)
+    chosen_ids = {record["sample_id"] for record in candidates}
+    remainder = [record for record in all_valid if record["sample_id"] not in chosen_ids]
+    if len(candidates) < train_count + test_count:
+        candidates.extend(remainder[i] for i in rng.permutation(len(remainder))[: train_count + test_count - len(candidates)].tolist())
     order = rng.permutation(len(candidates)).tolist(); selected = [candidates[i] for i in order[:train_count + test_count]]
     if len(selected) != train_count + test_count: raise RuntimeError(f"PIE-Bench contains only {len(selected)} selected records")
     return selected[:train_count], selected[train_count:]
