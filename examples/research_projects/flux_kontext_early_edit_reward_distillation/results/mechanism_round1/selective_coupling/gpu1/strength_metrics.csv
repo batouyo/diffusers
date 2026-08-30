@@ -1,0 +1,6 @@
+sample_id,strength,reward_selected,winner_index,preserve_l1,edit_l1,instruction
+pie_5_change_attribute_pose_40_513000000000,0.0,False,0,0.022982968017458916,0.01901593618094921,a chair positioned [backwards] a table in a room illuminated by a window
+pie_5_change_attribute_pose_40_513000000000,0.25,False,0,0.022121984511613846,0.018328553065657616,a chair positioned [backwards] a table in a room illuminated by a window
+pie_5_change_attribute_pose_40_513000000000,0.5,False,0,0.019906312227249146,0.016609838232398033,a chair positioned [backwards] a table in a room illuminated by a window
+pie_5_change_attribute_pose_40_513000000000,0.75,False,0,0.01900702528655529,0.01591293327510357,a chair positioned [backwards] a table in a room illuminated by a window
+pie_5_change_attribute_pose_40_513000000000,1.0,False,0,0.3018784821033478,0.30554118752479553,a chair positioned [backwards] a table in a room illuminated by a window

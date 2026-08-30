@@ -1,0 +1,16 @@
+sample_id,strength,reward_selected,winner_index,preserve_l1,edit_l1,instruction
+pie_8_change_background_80_812000000004,0.0,False,0,0.02834402583539486,0.06031361222267151,an angel with wings standing in a [river]
+pie_8_change_background_80_812000000004,0.25,False,0,0.01146262139081955,0.04433738812804222,an angel with wings standing in a [river]
+pie_8_change_background_80_812000000004,0.5,False,0,0.061861757189035416,0.10545379668474197,an angel with wings standing in a [river]
+pie_8_change_background_80_812000000004,0.75,False,0,0.21243444085121155,0.15264201164245605,an angel with wings standing in a [river]
+pie_8_change_background_80_812000000004,1.0,False,0,0.2560102045536041,0.1552058309316635,an angel with wings standing in a [river]
+pie_2_add_object_80_211000000001,0.0,False,0,0.02921147271990776,0.03804270550608635,a cat [with a gold chain] [and a star on its head]
+pie_2_add_object_80_211000000001,0.25,False,0,0.016129741445183754,0.02756199985742569,a cat [with a gold chain] [and a star on its head]
+pie_2_add_object_80_211000000001,0.5,False,0,0.015591599978506565,0.02703149802982807,a cat [with a gold chain] [and a star on its head]
+pie_2_add_object_80_211000000001,0.75,False,0,0.014575029723346233,0.02532023936510086,a cat [with a gold chain] [and a star on its head]
+pie_2_add_object_80_211000000001,1.0,False,0,0.014575782231986523,0.0254654698073864,a cat [with a gold chain] [and a star on its head]
+pie_0_random_140_000000000104,0.0,False,0,0.032582368701696396,0.041188742965459824,a woman with [white] [snakes] in her hair
+pie_0_random_140_000000000104,0.25,False,0,0.02833511307835579,0.038092080503702164,a woman with [white] [snakes] in her hair
+pie_0_random_140_000000000104,0.5,False,0,0.013454368337988853,0.02132214792072773,a woman with [white] [snakes] in her hair
+pie_0_random_140_000000000104,0.75,False,0,0.013043574057519436,0.2260633111000061,a woman with [white] [snakes] in her hair
+pie_0_random_140_000000000104,1.0,False,0,0.013196350075304508,0.2814505398273468,a woman with [white] [snakes] in her hair

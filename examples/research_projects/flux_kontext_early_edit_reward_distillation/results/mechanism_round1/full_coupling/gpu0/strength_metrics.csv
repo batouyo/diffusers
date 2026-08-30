@@ -1,0 +1,21 @@
+sample_id,strength,reward_selected,winner_index,preserve_l1,edit_l1,instruction
+pie_5_change_attribute_pose_40_513000000003,0.0,False,0,0.03016524203121662,0.03007533960044384,coffee cups [randomly arranged] round on a table that looks like [6] o'clock
+pie_5_change_attribute_pose_40_513000000003,0.25,False,0,0.025768272578716278,0.025720912963151932,coffee cups [randomly arranged] round on a table that looks like [6] o'clock
+pie_5_change_attribute_pose_40_513000000003,0.5,False,0,0.011533587239682674,0.013695753179490566,coffee cups [randomly arranged] round on a table that looks like [6] o'clock
+pie_5_change_attribute_pose_40_513000000003,0.75,False,0,0.01267955731600523,0.014149530790746212,coffee cups [randomly arranged] round on a table that looks like [6] o'clock
+pie_5_change_attribute_pose_40_513000000003,1.0,False,0,0.02913820929825306,0.01581328734755516,coffee cups [randomly arranged] round on a table that looks like [6] o'clock
+pie_8_change_background_80_824000000009,0.0,False,0,0.022233130410313606,0.062489282339811325,a small mushroom is sitting on top of [rocks]
+pie_8_change_background_80_824000000009,0.25,False,0,0.017825042828917503,0.03541059419512749,a small mushroom is sitting on top of [rocks]
+pie_8_change_background_80_824000000009,0.5,False,0,0.0687437355518341,0.05002147704362869,a small mushroom is sitting on top of [rocks]
+pie_8_change_background_80_824000000009,0.75,False,0,0.07327024638652802,0.15287229418754578,a small mushroom is sitting on top of [rocks]
+pie_8_change_background_80_824000000009,1.0,False,0,0.0810045674443245,0.16670751571655273,a small mushroom is sitting on top of [rocks]
+pie_4_change_attribute_content_40_414000000000,0.0,False,0,0.03481101617217064,0.06784246861934662,a cave with trees and [blood] river in the background
+pie_4_change_attribute_content_40_414000000000,0.25,False,0,0.029948676005005836,0.05463054031133652,a cave with trees and [blood] river in the background
+pie_4_change_attribute_content_40_414000000000,0.5,False,0,0.2076772302389145,0.282747745513916,a cave with trees and [blood] river in the background
+pie_4_change_attribute_content_40_414000000000,0.75,False,0,0.25195813179016113,0.462268203496933,a cave with trees and [blood] river in the background
+pie_4_change_attribute_content_40_414000000000,1.0,False,0,0.2520018517971039,0.46207284927368164,a cave with trees and [blood] river in the background
+pie_4_change_attribute_content_40_411000000001,0.0,False,0,0.055055636912584305,0.05249583348631859,a colorful parrot with its wings [fold in]
+pie_4_change_attribute_content_40_411000000001,0.25,False,0,0.057236939668655396,0.052977144718170166,a colorful parrot with its wings [fold in]
+pie_4_change_attribute_content_40_411000000001,0.5,False,0,0.061406876891851425,0.054138872772455215,a colorful parrot with its wings [fold in]
+pie_4_change_attribute_content_40_411000000001,0.75,False,0,0.06656302511692047,0.05587846785783768,a colorful parrot with its wings [fold in]
+pie_4_change_attribute_content_40_411000000001,1.0,False,0,0.0839180275797844,0.13274548947811127,a colorful parrot with its wings [fold in]

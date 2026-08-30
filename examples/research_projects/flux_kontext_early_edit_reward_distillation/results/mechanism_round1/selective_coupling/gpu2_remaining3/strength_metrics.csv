@@ -1,0 +1,16 @@
+sample_id,strength,reward_selected,winner_index,preserve_l1,edit_l1,instruction
+pie_1_change_object_80_121000000003,0.0,False,0,0.02839301899075508,0.019767487421631813,a white [rat] is walking on the grass
+pie_1_change_object_80_121000000003,0.25,False,0,0.02890019863843918,0.0201911348849535,a white [rat] is walking on the grass
+pie_1_change_object_80_121000000003,0.5,False,0,0.07487812638282776,0.32005617022514343,a white [rat] is walking on the grass
+pie_1_change_object_80_121000000003,0.75,False,0,0.08236655592918396,0.3396453261375427,a white [rat] is walking on the grass
+pie_1_change_object_80_121000000003,1.0,False,0,0.08742054551839828,0.3463088870048523,a white [rat] is walking on the grass
+pie_7_change_attribute_material_40_721000000000,0.0,False,0,0.023764904588460922,0.024415751919150352,a photo of a [bronze] horse [toy] in the field
+pie_7_change_attribute_material_40_721000000000,0.25,False,0,0.02336731366813183,0.025258956477046013,a photo of a [bronze] horse [toy] in the field
+pie_7_change_attribute_material_40_721000000000,0.5,False,0,0.023584408685564995,0.02766580693423748,a photo of a [bronze] horse [toy] in the field
+pie_7_change_attribute_material_40_721000000000,0.75,False,0,0.025825878605246544,0.21034516394138336,a photo of a [bronze] horse [toy] in the field
+pie_7_change_attribute_material_40_721000000000,1.0,False,0,0.08566617220640182,0.2872987389564514,a photo of a [bronze] horse [toy] in the field
+pie_7_change_attribute_material_40_724000000003,0.0,False,0,0.02263995073735714,0.01991594210267067,a single [dried] rose [lego] in front of an orange wall
+pie_7_change_attribute_material_40_724000000003,0.25,False,0,0.017144860699772835,0.01724356599152088,a single [dried] rose [lego] in front of an orange wall
+pie_7_change_attribute_material_40_724000000003,0.5,False,0,0.03289937227964401,0.02616237662732601,a single [dried] rose [lego] in front of an orange wall
+pie_7_change_attribute_material_40_724000000003,0.75,False,0,0.1511247754096985,0.199903666973114,a single [dried] rose [lego] in front of an orange wall
+pie_7_change_attribute_material_40_724000000003,1.0,False,0,0.16139328479766846,0.21002799272537231,a single [dried] rose [lego] in front of an orange wall

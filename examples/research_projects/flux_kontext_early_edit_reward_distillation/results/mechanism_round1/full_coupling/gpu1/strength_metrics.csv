@@ -1,0 +1,21 @@
+sample_id,strength,reward_selected,winner_index,preserve_l1,edit_l1,instruction
+pie_5_change_attribute_pose_40_513000000000,0.0,False,0,0.0321076437830925,0.04781922698020935,a chair positioned [backwards] a table in a room illuminated by a window
+pie_5_change_attribute_pose_40_513000000000,0.25,False,0,0.029772944748401642,0.04362829774618149,a chair positioned [backwards] a table in a room illuminated by a window
+pie_5_change_attribute_pose_40_513000000000,0.5,False,0,0.021344132721424103,0.017822925001382828,a chair positioned [backwards] a table in a room illuminated by a window
+pie_5_change_attribute_pose_40_513000000000,0.75,False,0,0.020392246544361115,0.016979346051812172,a chair positioned [backwards] a table in a room illuminated by a window
+pie_5_change_attribute_pose_40_513000000000,1.0,False,0,0.23136070370674133,0.18497048318386078,a chair positioned [backwards] a table in a room illuminated by a window
+pie_5_change_attribute_pose_40_524000000001,0.0,False,0,0.030157100409269333,0.061895690858364105,a [wind blown] tree [lies] in a field at sunrise
+pie_5_change_attribute_pose_40_524000000001,0.25,False,0,0.01573113165795803,0.04249917343258858,a [wind blown] tree [lies] in a field at sunrise
+pie_5_change_attribute_pose_40_524000000001,0.5,False,0,0.018006645143032074,0.05849405378103256,a [wind blown] tree [lies] in a field at sunrise
+pie_5_change_attribute_pose_40_524000000001,0.75,False,0,0.18292811512947083,0.3126954138278961,a [wind blown] tree [lies] in a field at sunrise
+pie_5_change_attribute_pose_40_524000000001,1.0,False,0,0.2093908190727234,0.3429826498031616,a [wind blown] tree [lies] in a field at sunrise
+pie_3_delete_object_80_312000000004,0.0,False,0,0.01602853089570999,0.021801916882395744,a cartoon girl sitting
+pie_3_delete_object_80_312000000004,0.25,False,0,0.015056956559419632,0.020931897684931755,a cartoon girl sitting
+pie_3_delete_object_80_312000000004,0.5,False,0,0.010943452827632427,0.01779882051050663,a cartoon girl sitting
+pie_3_delete_object_80_312000000004,0.75,False,0,0.06651074439287186,0.11699331551790237,a cartoon girl sitting
+pie_3_delete_object_80_312000000004,1.0,False,0,0.10463732481002808,0.21299128234386444,a cartoon girl sitting
+pie_4_change_attribute_content_40_422000000001,0.0,False,0,0.011315524578094482,0.03782792016863823,a woman with [short curly hair]
+pie_4_change_attribute_content_40_422000000001,0.25,False,0,0.010378600098192692,0.03687185049057007,a woman with [short curly hair]
+pie_4_change_attribute_content_40_422000000001,0.5,False,0,0.009275716729462147,0.03579282760620117,a woman with [short curly hair]
+pie_4_change_attribute_content_40_422000000001,0.75,False,0,0.030183708295226097,0.21228766441345215,a woman with [short curly hair]
+pie_4_change_attribute_content_40_422000000001,1.0,False,0,0.049243927001953125,0.22396960854530334,a woman with [short curly hair]

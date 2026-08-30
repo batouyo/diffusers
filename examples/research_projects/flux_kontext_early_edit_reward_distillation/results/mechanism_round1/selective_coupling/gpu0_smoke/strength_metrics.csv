@@ -1,0 +1,6 @@
+sample_id,strength,reward_selected,winner_index,preserve_l1,edit_l1,instruction
+pie_5_change_attribute_pose_40_513000000003,0.0,False,0,0.03016524203121662,0.03007533960044384,coffee cups [randomly arranged] round on a table that looks like [6] o'clock
+pie_5_change_attribute_pose_40_513000000003,0.25,False,0,0.02597639337182045,0.025736771523952484,coffee cups [randomly arranged] round on a table that looks like [6] o'clock
+pie_5_change_attribute_pose_40_513000000003,0.5,False,0,0.011553041636943817,0.01367551926523447,coffee cups [randomly arranged] round on a table that looks like [6] o'clock
+pie_5_change_attribute_pose_40_513000000003,0.75,False,0,0.01261433307081461,0.014122185297310352,coffee cups [randomly arranged] round on a table that looks like [6] o'clock
+pie_5_change_attribute_pose_40_513000000003,1.0,False,0,0.013037610799074173,0.014441292732954025,coffee cups [randomly arranged] round on a table that looks like [6] o'clock

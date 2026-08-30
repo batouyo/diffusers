@@ -1,0 +1,11 @@
+sample_id,strength,reward_selected,winner_index,preserve_l1,edit_l1,instruction
+pie_4_change_attribute_content_40_414000000000,0.0,False,0,0.030764106661081314,0.06464768946170807,a cave with trees and [blood] river in the background
+pie_4_change_attribute_content_40_414000000000,0.25,False,0,0.014498008415102959,0.03360770642757416,a cave with trees and [blood] river in the background
+pie_4_change_attribute_content_40_414000000000,0.5,False,0,0.08343491703271866,0.11893010884523392,a cave with trees and [blood] river in the background
+pie_4_change_attribute_content_40_414000000000,0.75,False,0,0.20735979080200195,0.42628470063209534,a cave with trees and [blood] river in the background
+pie_4_change_attribute_content_40_414000000000,1.0,False,0,0.22467568516731262,0.43118172883987427,a cave with trees and [blood] river in the background
+pie_4_change_attribute_content_40_411000000001,0.0,False,0,0.05548882856965065,0.0633876845240593,a colorful parrot with its wings [fold in]
+pie_4_change_attribute_content_40_411000000001,0.25,False,0,0.056427206844091415,0.06197039783000946,a colorful parrot with its wings [fold in]
+pie_4_change_attribute_content_40_411000000001,0.5,False,0,0.05796089768409729,0.05918681621551514,a colorful parrot with its wings [fold in]
+pie_4_change_attribute_content_40_411000000001,0.75,False,0,0.07476308196783066,0.22336788475513458,a colorful parrot with its wings [fold in]
+pie_4_change_attribute_content_40_411000000001,1.0,False,0,0.08342092484235764,0.3307682275772095,a colorful parrot with its wings [fold in]

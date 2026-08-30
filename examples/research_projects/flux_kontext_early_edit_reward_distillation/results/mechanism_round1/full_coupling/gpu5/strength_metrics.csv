@@ -1,0 +1,21 @@
+sample_id,strength,reward_selected,winner_index,preserve_l1,edit_l1,instruction
+pie_0_random_140_000000000049,0.0,False,0,0.016792885959148407,0.01668553799390793,[yellow] [metal] chair [with black dots] in a conference room
+pie_0_random_140_000000000049,0.25,False,0,0.017151642590761185,0.01769569143652916,[yellow] [metal] chair [with black dots] in a conference room
+pie_0_random_140_000000000049,0.5,False,0,0.0204731747508049,0.2696792483329773,[yellow] [metal] chair [with black dots] in a conference room
+pie_0_random_140_000000000049,0.75,False,0,0.02065763995051384,0.33847594261169434,[yellow] [metal] chair [with black dots] in a conference room
+pie_0_random_140_000000000049,1.0,False,0,0.02062780037522316,0.36745449900627136,[yellow] [metal] chair [with black dots] in a conference room
+pie_8_change_background_80_812000000004,0.0,False,0,0.018718071281909943,0.059645578265190125,an angel with wings standing in a [river]
+pie_8_change_background_80_812000000004,0.25,False,0,0.011507702060043812,0.04420149698853493,an angel with wings standing in a [river]
+pie_8_change_background_80_812000000004,0.5,False,0,0.01338064856827259,0.04399985447525978,an angel with wings standing in a [river]
+pie_8_change_background_80_812000000004,0.75,False,0,0.18875932693481445,0.14470353722572327,an angel with wings standing in a [river]
+pie_8_change_background_80_812000000004,1.0,False,0,0.19972045719623566,0.15239250659942627,an angel with wings standing in a [river]
+pie_2_add_object_80_211000000001,0.0,False,0,0.03198118880391121,0.04384399577975273,a cat [with a gold chain] [and a star on its head]
+pie_2_add_object_80_211000000001,0.25,False,0,0.030785948038101196,0.04157136380672455,a cat [with a gold chain] [and a star on its head]
+pie_2_add_object_80_211000000001,0.5,False,0,0.028839178383350372,0.03712078928947449,a cat [with a gold chain] [and a star on its head]
+pie_2_add_object_80_211000000001,0.75,False,0,0.028702387586236,0.045376453548669815,a cat [with a gold chain] [and a star on its head]
+pie_2_add_object_80_211000000001,1.0,False,0,0.16845721006393433,0.2639966607093811,a cat [with a gold chain] [and a star on its head]
+pie_0_random_140_000000000104,0.0,False,0,0.04321713373064995,0.05060539394617081,a woman with [white] [snakes] in her hair
+pie_0_random_140_000000000104,0.25,False,0,0.014602385461330414,0.021594664081931114,a woman with [white] [snakes] in her hair
+pie_0_random_140_000000000104,0.5,False,0,0.017768699675798416,0.026370655745267868,a woman with [white] [snakes] in her hair
+pie_0_random_140_000000000104,0.75,False,0,0.015541557222604752,0.16815660893917084,a woman with [white] [snakes] in her hair
+pie_0_random_140_000000000104,1.0,False,0,0.19577434659004211,0.30352523922920227,a woman with [white] [snakes] in her hair

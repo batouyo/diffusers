@@ -1,0 +1,21 @@
+sample_id,strength,reward_selected,winner_index,preserve_l1,edit_l1,instruction
+pie_7_change_attribute_material_40_724000000000,0.0,False,0,0.12692390382289886,0.07947490364313126,[plastic] snowdrops [toy] in the garden
+pie_7_change_attribute_material_40_724000000000,0.25,False,0,0.11593081802129745,0.07076144963502884,[plastic] snowdrops [toy] in the garden
+pie_7_change_attribute_material_40_724000000000,0.5,False,0,0.10480569303035736,0.06936556100845337,[plastic] snowdrops [toy] in the garden
+pie_7_change_attribute_material_40_724000000000,0.75,False,0,0.128932386636734,0.21676966547966003,[plastic] snowdrops [toy] in the garden
+pie_7_change_attribute_material_40_724000000000,1.0,False,0,0.14757485687732697,0.2326265275478363,[plastic] snowdrops [toy] in the garden
+pie_1_change_object_80_121000000003,0.0,False,0,0.029562456533312798,0.01985882595181465,a white [rat] is walking on the grass
+pie_1_change_object_80_121000000003,0.25,False,0,0.03016608953475952,0.020023494958877563,a white [rat] is walking on the grass
+pie_1_change_object_80_121000000003,0.5,False,0,0.0944034606218338,0.0327666811645031,a white [rat] is walking on the grass
+pie_1_change_object_80_121000000003,0.75,False,0,0.17324015498161316,0.32856062054634094,a white [rat] is walking on the grass
+pie_1_change_object_80_121000000003,1.0,False,0,0.19222378730773926,0.33431848883628845,a white [rat] is walking on the grass
+pie_7_change_attribute_material_40_721000000000,0.0,False,0,0.023623794317245483,0.024577252566814423,a photo of a [bronze] horse [toy] in the field
+pie_7_change_attribute_material_40_721000000000,0.25,False,0,0.02305150404572487,0.02463490702211857,a photo of a [bronze] horse [toy] in the field
+pie_7_change_attribute_material_40_721000000000,0.5,False,0,0.023163950070738792,0.026856856420636177,a photo of a [bronze] horse [toy] in the field
+pie_7_change_attribute_material_40_721000000000,0.75,False,0,0.04048774763941765,0.26448723673820496,a photo of a [bronze] horse [toy] in the field
+pie_7_change_attribute_material_40_721000000000,1.0,False,0,0.13057205080986023,0.2944272756576538,a photo of a [bronze] horse [toy] in the field
+pie_7_change_attribute_material_40_724000000003,0.0,False,0,0.021711044013500214,0.019576160237193108,a single [dried] rose [lego] in front of an orange wall
+pie_7_change_attribute_material_40_724000000003,0.25,False,0,0.01780063658952713,0.017740871757268906,a single [dried] rose [lego] in front of an orange wall
+pie_7_change_attribute_material_40_724000000003,0.5,False,0,0.031340718269348145,0.02587573044002056,a single [dried] rose [lego] in front of an orange wall
+pie_7_change_attribute_material_40_724000000003,0.75,False,0,0.1349283754825592,0.20092539489269257,a single [dried] rose [lego] in front of an orange wall
+pie_7_change_attribute_material_40_724000000003,1.0,False,0,0.1409289836883545,0.2034115195274353,a single [dried] rose [lego] in front of an orange wall

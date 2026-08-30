@@ -1,0 +1,16 @@
+sample_id,strength,reward_selected,winner_index,preserve_l1,edit_l1,instruction
+pie_5_change_attribute_pose_40_524000000001,0.0,False,0,0.014120625331997871,0.04069505259394646,a [wind blown] tree [lies] in a field at sunrise
+pie_5_change_attribute_pose_40_524000000001,0.25,False,0,0.014003789983689785,0.04038234427571297,a [wind blown] tree [lies] in a field at sunrise
+pie_5_change_attribute_pose_40_524000000001,0.5,False,0,0.02208794094622135,0.05775054916739464,a [wind blown] tree [lies] in a field at sunrise
+pie_5_change_attribute_pose_40_524000000001,0.75,False,0,0.1708434373140335,0.2880261242389679,a [wind blown] tree [lies] in a field at sunrise
+pie_5_change_attribute_pose_40_524000000001,1.0,False,0,0.18838101625442505,0.35345110297203064,a [wind blown] tree [lies] in a field at sunrise
+pie_3_delete_object_80_312000000004,0.0,False,0,0.043685536831617355,0.030233589932322502,a cartoon girl sitting
+pie_3_delete_object_80_312000000004,0.25,False,0,0.012270082719624043,0.020250385627150536,a cartoon girl sitting
+pie_3_delete_object_80_312000000004,0.5,False,0,0.008842553943395615,0.01714598573744297,a cartoon girl sitting
+pie_3_delete_object_80_312000000004,0.75,False,0,0.09320997446775436,0.22300218045711517,a cartoon girl sitting
+pie_3_delete_object_80_312000000004,1.0,False,0,0.16286851465702057,0.27938759326934814,a cartoon girl sitting
+pie_4_change_attribute_content_40_422000000001,0.0,False,0,0.010484111495316029,0.037725623697042465,a woman with [short curly hair]
+pie_4_change_attribute_content_40_422000000001,0.25,False,0,0.010352940298616886,0.03720412403345108,a woman with [short curly hair]
+pie_4_change_attribute_content_40_422000000001,0.5,False,0,0.01278380025178194,0.06607197225093842,a woman with [short curly hair]
+pie_4_change_attribute_content_40_422000000001,0.75,False,0,0.03500011935830116,0.2091783583164215,a woman with [short curly hair]
+pie_4_change_attribute_content_40_422000000001,1.0,False,0,0.043770525604486465,0.23212148249149323,a woman with [short curly hair]

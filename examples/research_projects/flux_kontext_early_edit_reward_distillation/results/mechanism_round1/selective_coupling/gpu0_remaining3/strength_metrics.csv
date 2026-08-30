@@ -1,0 +1,6 @@
+sample_id,strength,reward_selected,winner_index,preserve_l1,edit_l1,instruction
+pie_8_change_background_80_824000000009,0.0,False,0,0.018736911937594414,0.04362185671925545,a small mushroom is sitting on top of [rocks]
+pie_8_change_background_80_824000000009,0.25,False,0,0.019893575459718704,0.04348042979836464,a small mushroom is sitting on top of [rocks]
+pie_8_change_background_80_824000000009,0.5,False,0,0.01924010179936886,0.043702807277441025,a small mushroom is sitting on top of [rocks]
+pie_8_change_background_80_824000000009,0.75,False,0,0.05200589448213577,0.1566019207239151,a small mushroom is sitting on top of [rocks]
+pie_8_change_background_80_824000000009,1.0,False,0,0.06076551601290703,0.18736352026462555,a small mushroom is sitting on top of [rocks]
