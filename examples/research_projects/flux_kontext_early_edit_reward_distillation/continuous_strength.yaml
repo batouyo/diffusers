@@ -4,6 +4,9 @@ width: 512
 steps: 28
 guidance_scale: 3.5
 critical_steps: 2
+# Optional explicit scheduler transition indices. When omitted, the first
+# non-zero transitions are used as a fallback.
+critical_step_indices: null
 num_candidates: 4
 alpha: 0.05
 diffusion_scale: 1.0

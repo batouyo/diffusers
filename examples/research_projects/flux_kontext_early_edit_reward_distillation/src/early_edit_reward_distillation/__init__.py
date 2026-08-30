@@ -4,8 +4,9 @@ from .trajectory import KontextState, branch_step, prepare_state, two_stage_sear
 from .continuous_strength import (
     CallableRewardScorer, ContinuousStrengthConfig, RewardScorer, RewardUnavailable,
     TrajectoryBundle, TrajectoryTrace, build_bundle, deterministic_trace,
-    estimate_edit_token_mask, generate_early_branches, load_reward_factory,
+    estimate_edit_token_mask, generate_coupled_branches, load_reward_factory,
     rollout_strengths, save_bundle_metadata, save_bundle_tensors, select_winner,
+    strength_step,
 )
 __all__ = [
     "BranchRecord", "KontextState", "branch_step", "critical_nonzero_steps",
@@ -13,7 +14,7 @@ __all__ = [
     "rf_diffusion_coefficient", "rf_sde_step", "two_stage_search",
     "CallableRewardScorer", "ContinuousStrengthConfig", "RewardScorer",
     "RewardUnavailable", "TrajectoryBundle", "TrajectoryTrace", "build_bundle",
-    "deterministic_trace", "estimate_edit_token_mask", "generate_early_branches",
+    "deterministic_trace", "estimate_edit_token_mask", "generate_coupled_branches",
     "load_reward_factory", "rollout_strengths", "save_bundle_metadata",
-    "save_bundle_tensors", "select_winner", "prepare_state",
+    "save_bundle_tensors", "select_winner", "prepare_state", "strength_step",
 ]

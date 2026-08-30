@@ -12,6 +12,7 @@ from early_edit_reward_distillation.continuous_strength import (
     estimate_edit_token_mask,
     rollout_strengths,
     select_winner,
+    strength_step,
 )
 
 
@@ -62,12 +63,18 @@ def test_reward_missing_is_explicit_error():
 
 
 def test_strength_endpoints_and_intermediate_continuity():
-    preservation = trace("p", [[[0.0]], [[1.0]], [[2.0]]])
-    winner = trace("e", [[[0.0]], [[2.0]], [[4.0]]])
-    values = rollout_strengths(None, preservation, winner, [0.0, 0.5, 1.0])
-    assert torch.equal(values[0.0], preservation.terminal)
-    assert torch.equal(values[1.0], winner.terminal)
-    assert torch.allclose(values[0.5], torch.tensor([[[-1.5]]]))
+    x = torch.zeros(1, 2, 1)
+    vp = torch.ones_like(x)
+    ve = torch.full_like(x, 3.0)
+    p_res = torch.full_like(x, 2.0)
+    e_res = torch.full_like(x, 5.0)
+    s0 = strength_step(x, vp, ve, 1.0, 0.5, p_res, e_res, 0.0)
+    s1 = strength_step(x, vp, ve, 1.0, 0.5, p_res, e_res, 1.0)
+    s99 = strength_step(x, vp, ve, 1.0, 0.5, p_res, e_res, 0.99)
+    assert torch.allclose(s0, torch.full_like(x, 1.5))
+    assert torch.allclose(s1, torch.full_like(x, 3.5))
+    assert torch.max(torch.abs(s1 - s99)) < 0.1
+    assert torch.allclose(s0 - strength_step(x, vp, ve, 1.0, 0.5, torch.zeros_like(x), torch.zeros_like(x), 0.0), p_res)
 
 
 def test_strength_rejects_out_of_range():

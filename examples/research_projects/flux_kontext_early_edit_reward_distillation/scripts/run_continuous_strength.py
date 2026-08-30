@@ -72,6 +72,7 @@ def main() -> None:
     parser.add_argument("--guidance", type=float, default=3.5)
     parser.add_argument("--alpha", type=float, default=0.05)
     parser.add_argument("--coupling-strength", type=float, default=0.0)
+    parser.add_argument("--critical-step-indices", default=None, help="comma-separated scheduler transition indices; unset uses first non-zero transitions")
     parser.add_argument("--strengths", default="0,0.25,0.5,0.75,1")
     args = parser.parse_args()
     if args.reward_factory and args.candidate_index is not None:
@@ -80,7 +81,8 @@ def main() -> None:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     pipe = FluxKontextPipeline.from_pretrained(args.model, torch_dtype=torch.bfloat16, local_files_only=True).to(device)
     pipe.set_progress_bar_config(disable=True)
-    config = ContinuousStrengthConfig(height=args.height, width=args.width, steps=args.steps, guidance_scale=args.guidance, alpha=args.alpha, coupling_strength=args.coupling_strength, strengths=tuple(float(x) for x in args.strengths.split(",")))
+    critical_indices = None if args.critical_step_indices is None else tuple(int(x) for x in args.critical_step_indices.split(",") if x.strip())
+    config = ContinuousStrengthConfig(height=args.height, width=args.width, steps=args.steps, guidance_scale=args.guidance, alpha=args.alpha, coupling_strength=args.coupling_strength, critical_step_indices=critical_indices, strengths=tuple(float(x) for x in args.strengths.split(",")))
     output = Path(args.output); output.mkdir(parents=True, exist_ok=True)
     rows = []
     for record_index, (sample_id, sample_dir, instruction) in enumerate(load_records(args)):
@@ -92,7 +94,7 @@ def main() -> None:
         sample_output.mkdir(parents=True, exist_ok=True)
         decode_fn = lambda state, latents: decode(pipe, state, latents)
         bundle = build_bundle(pipe, source, instruction, decode_fn, scorer, seed=args.seed + record_index * 100, config=config, candidate_index=args.candidate_index)
-        strengths = rollout_strengths(pipe, bundle.preservation, bundle.winner, config.strengths)
+        strengths = rollout_strengths(pipe, bundle.preservation, bundle.winner, config.strengths, preservation_state=bundle.preservation_state, edited_state=bundle.edited_state)
         source.save(sample_output / "source.png")
         pixel_mask.save(sample_output / "edit_mask.png")
         mask = Image.fromarray((bundle.token_mask.cpu().numpy().astype(np.uint8) * 255).reshape(1, -1), mode="L")

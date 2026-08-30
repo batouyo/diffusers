@@ -1,35 +1,28 @@
-"""Training-free continuous-strength editing primitives for FLUX-Kontext.
+"""Training-free coupled continuous-strength editing for FLUX-Kontext.
 
-The preservation prompt and paired-velocity interpolation are deliberate
-engineering approximations: Kontext exposes an edit-conditioned velocity, not
-an independent oracle preservation velocity.  The module keeps those
-approximations explicit and makes all stochastic work happen before strength
-rollout.
+The neutral preservation prompt is an engineering approximation: Kontext does
+not expose an oracle source-preservation velocity. The code keeps a real
+preservation/edit coupled rollout, while SDE residuals are reused for every
+strength without any new random sampling.
 """
 from __future__ import annotations
 
-import hashlib
 import importlib
 import json
 import math
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Protocol, Sequence
 
-import numpy as np
 import torch
 from PIL import Image
 
-from .core import coupled_noise, critical_nonzero_steps, native_euler_sde_step, tensor_hash
-from .metrics import region_l1
-from .trajectory import KontextState, _sigmas, ode_step, prepare_state, velocity
+from .core import coupled_noise, critical_nonzero_steps, native_euler_sde_step, noise_correlations, tensor_hash
+from .trajectory import KontextState, _sigmas, prepare_state, velocity
 
 
 class RewardScorer(Protocol):
-    """Minimal pluggable image-edit reward contract."""
-
-    def score(self, source: Image.Image, candidate: Image.Image, instruction: str) -> float:
-        ...
+    def score(self, source: Image.Image, candidate: Image.Image, instruction: str) -> float: ...
 
 
 class CallableRewardScorer:
@@ -52,6 +45,7 @@ class ContinuousStrengthConfig:
     steps: int = 28
     guidance_scale: float = 3.5
     critical_steps: int = 2
+    critical_step_indices: tuple[int, ...] | None = None
     num_candidates: int = 4
     alpha: float = 0.05
     diffusion_scale: float = 1.0
@@ -61,31 +55,30 @@ class ContinuousStrengthConfig:
     max_edit_ratio: float = 0.40
     strengths: tuple[float, ...] = (0.0, 0.25, 0.5, 0.75, 1.0)
 
-    def __post_init__(self) -> None:
+    def __post_init__(self):
         if self.num_candidates != 4:
             raise ValueError("the minimal prototype fixes num_candidates=4")
         if self.critical_steps < 1:
             raise ValueError("critical_steps must be positive")
-        if not 0.0 <= self.coupling_strength <= 1.0:
+        if self.critical_step_indices is not None and not self.critical_step_indices:
+            raise ValueError("critical_step_indices cannot be empty")
+        if not 0 <= self.coupling_strength <= 1:
             raise ValueError("coupling_strength must lie in [0, 1]")
-        if not 0.0 <= self.mask_quantile <= 1.0:
-            raise ValueError("mask_quantile must lie in [0, 1]")
-        if not 0.0 <= self.min_edit_ratio <= self.max_edit_ratio <= 1.0:
-            raise ValueError("edit ratio bounds must satisfy 0 <= min <= max <= 1")
-        if any(not 0.0 <= float(s) <= 1.0 for s in self.strengths):
-            raise ValueError("all strengths must lie in [0, 1]")
+        if not 0 <= self.min_edit_ratio <= self.max_edit_ratio <= 1:
+            raise ValueError("invalid edit ratio bounds")
+        if any(not 0 <= float(s) <= 1 for s in self.strengths):
+            raise ValueError("strengths must lie in [0, 1]")
 
 
 @dataclass
 class TrajectoryTrace:
-    """State/velocity cache; states has one more element than velocities."""
-
     prompt: str
     states: list[torch.Tensor]
     velocities: list[torch.Tensor]
     timesteps: list[float]
     sigmas: list[tuple[float, float]]
     terminal: torch.Tensor
+    residuals: list[torch.Tensor] = field(default_factory=list)
 
     def metadata(self) -> dict[str, Any]:
         return {
@@ -93,10 +86,9 @@ class TrajectoryTrace:
             "num_steps": len(self.velocities),
             "state_hashes": [tensor_hash(x) for x in self.states],
             "terminal_hash": tensor_hash(self.terminal),
-            "state_norms": [float(x.float().norm().item()) for x in self.states],
-            "velocity_norms": [float(x.float().norm().item()) for x in self.velocities],
             "timesteps": self.timesteps,
             "sigmas": [list(x) for x in self.sigmas],
+            "residual_norms": [float(x.float().norm()) for x in self.residuals],
         }
 
 
@@ -112,271 +104,172 @@ class TrajectoryBundle:
     rewards: list[float]
     metadata: dict[str, Any]
     branch_images: list[list[Image.Image]]
+    preservation_state: Any = None
+    edited_state: Any = None
 
 
-def _same_initial_latents(edit_state: KontextState, preserve_state: KontextState) -> None:
-    if edit_state.latents.shape != preserve_state.latents.shape:
-        raise ValueError("preservation and edited latent shapes differ")
-    preserve_state.latents = edit_state.latents.detach().clone()
+def _critical_indices(pipe: Any, cfg: ContinuousStrengthConfig) -> list[int]:
+    valid = critical_nonzero_steps(pipe.scheduler.sigmas.detach().cpu().flatten().tolist())
+    valid_indices = {int(x["index"]) for x in valid}
+    indices = list(cfg.critical_step_indices) if cfg.critical_step_indices is not None else [int(x["index"]) for x in valid[: cfg.critical_steps]]
+    if len(indices) != len(set(indices)) or any(i not in valid_indices for i in indices):
+        raise ValueError("critical_step_indices must be unique non-zero scheduler transitions")
+    return sorted(indices)
+
+
+def _step(x, v, sigma, sigma_next):
+    return (x.float() + (float(sigma_next) - float(sigma)) * v.float()).to(x.dtype)
+
+
+def strength_step(x, preservation_velocity, edited_velocity, sigma, sigma_next, preservation_residual, reward_residual, strength):
+    """One deterministic strength update with linearly scaled SDE residuals."""
+    s = float(strength)
+    if not 0.0 <= s <= 1.0:
+        raise ValueError("strength must lie in [0, 1]")
+    blended = preservation_velocity.float() + s * (edited_velocity.float() - preservation_velocity.float())
+    residual = (1.0 - s) * preservation_residual.float() + s * reward_residual.float()
+    return (_step(x, blended, sigma, sigma_next).float() + residual).to(x.dtype)
 
 
 @torch.inference_mode()
-def deterministic_trace(pipe: Any, state: KontextState, *, start: torch.Tensor | None = None) -> TrajectoryTrace:
-    current = state.latents if start is None else start
-    states = [current.detach().clone()]
-    velocities: list[torch.Tensor] = []
-    timesteps: list[float] = []
-    sigmas: list[tuple[float, float]] = []
+def deterministic_trace(pipe: Any, state: KontextState) -> TrajectoryTrace:
+    x = state.latents
+    states = [x.clone()]
+    velocities, timesteps, sigmas, residuals = [], [], [], []
     for timestep in state.timesteps:
-        pred = velocity(pipe, state, current, timestep)
+        v = velocity(pipe, state, x, timestep)
         sigma, sigma_next = _sigmas(pipe, timestep)
-        velocities.append(pred.detach().clone())
-        timesteps.append(float(timestep))
-        sigmas.append((sigma, sigma_next))
-        current = (current.float() + (sigma_next - sigma) * pred.float()).to(current.dtype)
-        states.append(current.detach().clone())
-    return TrajectoryTrace(str(state.metadata.get("prompt", "")), states, velocities, timesteps, sigmas, current.detach().clone())
+        x = _step(x, v, sigma, sigma_next)
+        velocities.append(v.clone()); timesteps.append(float(timestep)); sigmas.append((sigma, sigma_next)); residuals.append(torch.zeros_like(x)); states.append(x.clone())
+    return TrajectoryTrace(str(state.metadata.get("prompt", "")), states, velocities, timesteps, sigmas, x.clone(), residuals)
 
 
-def estimate_edit_token_mask(
-    preservation: TrajectoryTrace,
-    edited: TrajectoryTrace,
-    critical_indices: Sequence[int],
-    *,
-    quantile: float = 0.75,
-    min_ratio: float = 0.02,
-    max_ratio: float = 0.40,
-) -> tuple[torch.Tensor, torch.Tensor]:
+def estimate_edit_token_mask(preservation: TrajectoryTrace, edited: TrajectoryTrace, critical_indices: Sequence[int], *, quantile=.75, min_ratio=.02, max_ratio=.40):
     if len(preservation.states) != len(edited.states):
         raise ValueError("paired traces must have equal lengths")
     if not critical_indices:
         raise ValueError("at least one critical index is required")
     scores = []
-    for index in critical_indices:
-        post = int(index) + 1
-        if post >= len(preservation.states):
-            raise IndexError(f"critical index {index} is outside trace")
-        delta = (edited.states[post].float() - preservation.states[post].float()).squeeze(0)
+    for i in critical_indices:
+        if int(i) + 1 >= len(preservation.states):
+            raise IndexError(f"critical index {i} is outside trace")
+        delta = (edited.states[int(i) + 1].float() - preservation.states[int(i) + 1].float()).squeeze(0)
         scores.append(delta.norm(dim=-1))
-    raw = torch.stack(scores, dim=0).amax(dim=0)
+    raw = torch.stack(scores).amax(0)
     lo, hi = raw.min(), raw.max()
     normalized = torch.zeros_like(raw) if float(hi - lo) <= 1e-12 else (raw - lo) / (hi - lo)
-    n = normalized.numel()
-    min_tokens = max(1, int(math.ceil(n * min_ratio))) if min_ratio > 0 else 0
-    max_tokens = max(min_tokens, min(n, int(math.floor(n * max_ratio))))
-    selected = normalized >= torch.quantile(normalized, float(quantile))
-    count = int(selected.sum().item())
-    if count < min_tokens:
-        selected = torch.zeros_like(selected, dtype=torch.bool)
-        selected[torch.topk(normalized, k=min_tokens).indices] = True
-    elif count > max_tokens:
-        selected = torch.zeros_like(selected, dtype=torch.bool)
-        selected[torch.topk(normalized, k=max_tokens).indices] = True
-    return selected, normalized
+    n = normalized.numel(); low = max(1, math.ceil(n * min_ratio)) if min_ratio else 0; high = max(low, min(n, math.floor(n * max_ratio)))
+    mask = normalized >= torch.quantile(normalized, float(quantile))
+    if int(mask.sum()) < low:
+        mask = torch.zeros_like(mask, dtype=torch.bool); mask[torch.topk(normalized, low).indices] = True
+    if int(mask.sum()) > high:
+        mask = torch.zeros_like(mask, dtype=torch.bool); mask[torch.topk(normalized, high).indices] = True
+    return mask, normalized
 
 
-def select_winner(
-    source: Image.Image,
-    candidates: Sequence[Image.Image],
-    instruction: str,
-    scorer: RewardScorer | None,
-    *,
-    candidate_index: int | None = None,
-) -> tuple[int, list[float], bool]:
+def select_winner(source, candidates, instruction, scorer, *, candidate_index=None):
     if len(candidates) != 4:
         raise ValueError("the minimal prototype fixes four candidates")
     if candidate_index is not None:
-        if not 0 <= int(candidate_index) < len(candidates):
+        if not 0 <= int(candidate_index) < 4:
             raise ValueError("candidate_index is outside candidate range")
-        return int(candidate_index), [float("nan")] * len(candidates), False
+        return int(candidate_index), [float("nan")] * 4, False
     if scorer is None:
         raise RewardUnavailable("a RewardScorer or explicit candidate_index is required")
-    rewards = [float(scorer.score(source, image, instruction)) for image in candidates]
+    rewards = [float(scorer.score(source, x, instruction)) for x in candidates]
     if not all(math.isfinite(x) for x in rewards):
         raise ValueError("Reward returned a non-finite value")
-    winner = max(range(len(rewards)), key=lambda i: (rewards[i], -i))
-    return winner, rewards, True
+    return max(range(4), key=lambda i: (rewards[i], -i)), rewards, True
 
 
 @torch.inference_mode()
-def _rollout_terminal(pipe: Any, state: KontextState, current: torch.Tensor, start: int) -> torch.Tensor:
-    return deterministic_trace(pipe, state, start=current).terminal if start == 0 else _trace_from_step(pipe, state, current, start).terminal
+def _terminal(pipe, state, x, start):
+    for i in range(start, len(state.timesteps)):
+        t = state.timesteps[i]; v = velocity(pipe, state, x, t); a, b = _sigmas(pipe, t); x = _step(x, v, a, b)
+    return x
 
 
 @torch.inference_mode()
-def _trace_from_step(pipe: Any, state: KontextState, current: torch.Tensor, start: int) -> TrajectoryTrace:
-    states = [current.detach().clone()]
-    velocities: list[torch.Tensor] = []
-    timesteps: list[float] = []
-    sigmas: list[tuple[float, float]] = []
-    for timestep in state.timesteps[start:]:
-        pred = velocity(pipe, state, current, timestep)
-        sigma, sigma_next = _sigmas(pipe, timestep)
-        velocities.append(pred.detach().clone())
-        timesteps.append(float(timestep))
-        sigmas.append((sigma, sigma_next))
-        current = (current.float() + (sigma_next - sigma) * pred.float()).to(current.dtype)
-        states.append(current.detach().clone())
-    return TrajectoryTrace(str(state.metadata.get("prompt", "")), states, velocities, timesteps, sigmas, current.detach().clone())
+def generate_coupled_branches(pipe, preservation_state, edited_state, token_mask, source, instruction, decode, scorer, *, seed, cfg, candidate_index=None):
+    critical = set(_critical_indices(pipe, cfg)); p, e = preservation_state.latents, edited_state.latents
+    p_states, e_states = [p.clone()], [e.clone()]; pvs, evs, ts, ss, p_residuals, e_residuals = [], [], [], [], [], []
+    records, branch_images = [], []; final_rewards = []; winner_index = 0; used_reward = False
+    mask = token_mask.to(e.device, dtype=torch.bool).reshape(1, -1, 1)
+    for i, t in enumerate(edited_state.timesteps):
+        vp, ve = velocity(pipe, preservation_state, p, t), velocity(pipe, edited_state, e, t)
+        a, b = _sigmas(pipe, t); p_mean, e_mean = _step(p, vp, a, b), _step(e, ve, a, b)
+        p_residual = torch.zeros_like(p); e_residual = torch.zeros_like(e)
+        if i in critical:
+            gen = torch.Generator(device=e.device).manual_seed(int(seed + i))
+            shared = torch.randn(e.shape, generator=gen, device=e.device, dtype=torch.float32)
+            independent = torch.randn((4,) + tuple(e.shape[1:]), generator=gen, device=e.device, dtype=torch.float32)
+            p_next, _ = native_euler_sde_step(p, vp, a, b, shared, alpha=cfg.alpha, diffusion_scale=cfg.diffusion_scale, first_step=i == 0)
+            mixed = coupled_noise(shared.expand_as(independent), independent, mask, rho=cfg.coupling_strength)
+            correlation = noise_correlations(shared, mixed[:1], independent[:1], mask)
+            candidates, terminals, diagnostics = [], [], []
+            for j in range(4):
+                candidate, diag = native_euler_sde_step(e, ve, a, b, mixed[j], alpha=cfg.alpha, diffusion_scale=cfg.diffusion_scale, first_step=i == 0)
+                candidates.append(candidate); terminals.append(_terminal(pipe, edited_state, candidate, i + 1))
+                diagnostics.append({**diag, "candidate_index": j, "candidate_seed": int(seed + i), "state_hash": tensor_hash(candidate), "finite": bool(torch.isfinite(candidate).all())})
+            stage_images = [decode(edited_state, x)[0] for x in terminals]; branch_images.append(stage_images)
+            winner_index, rewards, used = select_winner(source, stage_images, instruction, scorer, candidate_index=candidate_index)
+            final_rewards, used_reward = rewards, used_reward or used; e_next = candidates[winner_index]
+            p_residual, e_residual = p_next - p_mean, e_next - e_mean
+            records.append({"stage": len(records) + 1, "branch_step_index": i, "post_branch_step_index": i + 1, "winner_index": winner_index, "rewards": rewards, "used_reward": used, "seed": int(seed + i), "sigma": a, "sigma_next": b, "preservation_residual_norm": float(p_residual.float().norm()), "reward_residual_norm": float(e_residual.float().norm()), **correlation, "candidate_diagnostics": diagnostics})
+        else:
+            p_next, e_next = p_mean, e_mean
+        pvs.append(vp.clone()); evs.append(ve.clone()); ts.append(float(t)); ss.append((a, b)); p_residuals.append(p_residual.clone()); e_residuals.append(e_residual.clone())
+        p, e = p_next, e_next; p_states.append(p.clone()); e_states.append(e.clone())
+    preservation = TrajectoryTrace(str(preservation_state.metadata.get("prompt", "")), p_states, pvs, ts, ss, p.clone(), p_residuals)
+    winner = TrajectoryTrace(str(edited_state.metadata.get("prompt", "")), e_states, evs, ts, ss, e.clone(), e_residuals)
+    return preservation, winner, records, winner_index, final_rewards, used_reward, branch_images
 
 
 @torch.inference_mode()
-def generate_early_branches(
-    pipe: Any,
-    state: KontextState,
-    token_mask: torch.Tensor,
-    source: Image.Image,
-    instruction: str,
-    decode: Callable[[KontextState, torch.Tensor], Sequence[Image.Image]],
-    scorer: RewardScorer | None,
-    *,
-    seed: int,
-    critical_count: int = 2,
-    alpha: float = 0.05,
-    diffusion_scale: float = 1.0,
-    coupling_strength: float = 0.0,
-    candidate_index: int | None = None,
-) -> tuple[TrajectoryTrace, list[dict[str, Any]], int, list[float], bool, list[list[Image.Image]]]:
-    selected = critical_nonzero_steps(pipe.scheduler.sigmas.detach().cpu().flatten().tolist())[:critical_count]
-    if len(selected) < critical_count:
-        raise RuntimeError("scheduler exposed fewer critical non-zero transitions than requested")
-    current = state.latents
-    current_step = 0
-    trace_states = [current.detach().clone()]
-    trace_velocities: list[torch.Tensor] = []
-    trace_timesteps: list[float] = []
-    trace_sigmas: list[tuple[float, float]] = []
-    records: list[dict[str, Any]] = []
-    final_rewards: list[float] = []
-    used_reward = False
-    winner_index = 0
-    all_candidate_images: list[list[Image.Image]] = []
-    for stage, item in enumerate(selected, start=1):
-        step_index = int(item["index"])
-        while current_step < step_index:
-            timestep = state.timesteps[current_step]
-            pred = velocity(pipe, state, current, timestep)
-            sigma, sigma_next = _sigmas(pipe, timestep)
-            trace_velocities.append(pred.detach().clone()); trace_timesteps.append(float(timestep)); trace_sigmas.append((sigma, sigma_next))
-            current = (current.float() + (sigma_next - sigma) * pred.float()).to(current.dtype)
-            trace_states.append(current.detach().clone()); current_step += 1
-        timestep = state.timesteps[step_index]
-        pred = velocity(pipe, state, current, timestep)
-        sigma, sigma_next = _sigmas(pipe, timestep)
-        gen = torch.Generator(device=current.device).manual_seed(int(seed + stage))
-        shared = torch.randn(current.shape, generator=gen, device=current.device, dtype=torch.float32)
-        independent = torch.randn((4,) + tuple(current.shape[1:]), generator=gen, device=current.device, dtype=torch.float32)
-        mask = token_mask.to(device=current.device, dtype=torch.bool).reshape(1, -1, 1)
-        mixed = coupled_noise(shared.expand_as(independent), independent, mask, rho=float(coupling_strength))
-        candidates = []
-        terminals = []
-        diagnostics = []
-        for candidate_id in range(4):
-            candidate, diag = native_euler_sde_step(current, pred, sigma, sigma_next, mixed[candidate_id], alpha=alpha, diffusion_scale=diffusion_scale, first_step=step_index == 0)
-            candidates.append(candidate)
-            terminal = _rollout_terminal(pipe, state, candidate, step_index + 1)
-            terminals.append(terminal)
-            diagnostics.append({**diag, "candidate_index": candidate_id, "candidate_seed": int(seed + stage), "state_hash": tensor_hash(candidate), "finite": bool(torch.isfinite(candidate).all().item())})
-        candidate_images = [decode(state, x)[0] for x in terminals]
-        all_candidate_images.append(candidate_images)
-        winner_index, rewards, used = select_winner(source, candidate_images, instruction, scorer, candidate_index=candidate_index)
-        used_reward = used_reward or used
-        final_rewards = rewards
-        winner_state = candidates[winner_index]
-        records.append({"stage": stage, "branch_step_index": step_index, "post_branch_step_index": step_index + 1, "winner_index": winner_index, "rewards": rewards, "used_reward": used, "branch_state_hash": tensor_hash(current), "candidate_diagnostics": diagnostics, "sigma": sigma, "sigma_next": sigma_next})
-        # Cache the edited velocity at the branch step as the paired velocity
-        # for later strength interpolation; the actual state transition here
-        # is the selected SDE candidate rather than an Euler step.
-        trace_velocities.append(pred.detach().clone())
-        trace_timesteps.append(float(timestep))
-        trace_sigmas.append((sigma, sigma_next))
-        current = winner_state
-        trace_states.append(current.detach().clone())
-        current_step = step_index + 1
-    while current_step < len(state.timesteps):
-        timestep = state.timesteps[current_step]
-        pred = velocity(pipe, state, current, timestep)
-        sigma, sigma_next = _sigmas(pipe, timestep)
-        trace_velocities.append(pred.detach().clone()); trace_timesteps.append(float(timestep)); trace_sigmas.append((sigma, sigma_next))
-        current = (current.float() + (sigma_next - sigma) * pred.float()).to(current.dtype)
-        trace_states.append(current.detach().clone()); current_step += 1
-    trace = TrajectoryTrace(str(state.metadata.get("prompt", "")), trace_states, trace_velocities, trace_timesteps, trace_sigmas, current.detach().clone())
-    return trace, records, winner_index, final_rewards, used_reward, all_candidate_images
-
-
-@torch.inference_mode()
-def rollout_strengths(
-    pipe: Any,
-    preservation: TrajectoryTrace,
-    winner: TrajectoryTrace,
-    strengths: Sequence[float],
-) -> dict[float, torch.Tensor]:
+def rollout_strengths(pipe, preservation, winner, strengths, *, preservation_state=None, edited_state=None):
+    if preservation_state is None or edited_state is None:
+        raise ValueError("rollout requires preservation_state and edited_state")
     if len(preservation.velocities) != len(winner.velocities):
-        raise ValueError("preservation and winner traces must have equal length")
-    output: dict[float, torch.Tensor] = {}
-    for strength in strengths:
-        s = float(strength)
-        if not 0.0 <= s <= 1.0:
-            raise ValueError("strength must lie in [0, 1]")
-        if s == 0.0:
-            output[s] = preservation.terminal.detach().clone()
-            continue
-        if s == 1.0:
-            output[s] = winner.terminal.detach().clone()
-            continue
-        current = preservation.states[0].detach().clone()
-        for i, (v_preserve, v_full) in enumerate(zip(preservation.velocities, winner.velocities)):
-            blended = v_preserve.float() + s * (v_full.float() - v_preserve.float())
-            sigma, sigma_next = preservation.sigmas[i]
-            current = (current.float() + (sigma_next - sigma) * blended).to(current.dtype)
-        output[s] = current.detach().clone()
+        raise ValueError("paired traces must have equal lengths")
+    output = {}
+    for value in strengths:
+        s = float(value)
+        if not 0 <= s <= 1: raise ValueError("strength must lie in [0, 1]")
+        x = preservation.states[0].clone()
+        for i, t in enumerate(edited_state.timesteps):
+            vp = velocity(pipe, preservation_state, x, t); ve = velocity(pipe, edited_state, x, t)
+            a, b = preservation.sigmas[i]
+            x = strength_step(x, vp, ve, a, b, preservation.residuals[i], winner.residuals[i], s)
+        output[s] = x.clone()
     return output
 
 
 @torch.inference_mode()
-def build_bundle(
-    pipe: Any,
-    source: Image.Image,
-    instruction: str,
-    decode: Callable[[KontextState, torch.Tensor], Sequence[Image.Image]],
-    scorer: RewardScorer | None,
-    *,
-    seed: int,
-    config: ContinuousStrengthConfig | None = None,
-    candidate_index: int | None = None,
-) -> TrajectoryBundle:
+def build_bundle(pipe, source, instruction, decode, scorer, *, seed, config=None, candidate_index=None):
     cfg = config or ContinuousStrengthConfig()
     edited_state = prepare_state(pipe, source, instruction, seed, height=cfg.height, width=cfg.width, steps=cfg.steps, guidance_scale=cfg.guidance_scale, device=pipe._execution_device)
     preservation_state = prepare_state(pipe, source, cfg.neutral_prompt, seed, height=cfg.height, width=cfg.width, steps=cfg.steps, guidance_scale=cfg.guidance_scale, device=pipe._execution_device)
-    _same_initial_latents(edited_state, preservation_state)
-    preservation = deterministic_trace(pipe, preservation_state)
-    edited = deterministic_trace(pipe, edited_state)
-    critical = [int(x["index"]) for x in critical_nonzero_steps(pipe.scheduler.sigmas.detach().cpu().flatten().tolist())[: cfg.critical_steps]]
-    token_mask, mask_scores = estimate_edit_token_mask(preservation, edited, critical, quantile=cfg.mask_quantile, min_ratio=cfg.min_edit_ratio, max_ratio=cfg.max_edit_ratio)
-    winner, records, winner_index, rewards, used_reward, branch_images = generate_early_branches(pipe, edited_state, token_mask, source, instruction, decode, scorer, seed=seed + 10000, critical_count=cfg.critical_steps, alpha=cfg.alpha, diffusion_scale=cfg.diffusion_scale, coupling_strength=cfg.coupling_strength, candidate_index=candidate_index)
-    metadata = {"seed": int(seed), "instruction": instruction, "neutral_prompt": cfg.neutral_prompt, "config": asdict(cfg), "critical_indices": critical, "generated_tokens": int(edited_state.metadata["generated_tokens"]), "source_conditioning_tokens": int(edited_state.metadata["source_conditioning_tokens"]), "token_mask_length": int(token_mask.numel()), "token_mask": token_mask.cpu().tolist(), "mask_scores": mask_scores.cpu().tolist(), "used_reward": used_reward, "reward_selected": used_reward and candidate_index is None, "initial_state_hash": tensor_hash(edited_state.latents), "preservation": preservation.metadata(), "edited": edited.metadata(), "winner": winner.metadata()}
-    return TrajectoryBundle(preservation, edited, winner, token_mask, mask_scores, records, winner_index, rewards, metadata, branch_images)
+    preservation_state.latents = edited_state.latents.clone()
+    pilot_p, pilot_e = deterministic_trace(pipe, preservation_state), deterministic_trace(pipe, edited_state)
+    critical = _critical_indices(pipe, cfg); mask, scores = estimate_edit_token_mask(pilot_p, pilot_e, critical, quantile=cfg.mask_quantile, min_ratio=cfg.min_edit_ratio, max_ratio=cfg.max_edit_ratio)
+    preservation, winner, records, index, rewards, used, images = generate_coupled_branches(pipe, preservation_state, edited_state, mask, source, instruction, decode, scorer, seed=seed + 10000, cfg=cfg, candidate_index=candidate_index)
+    metadata = {"seed": int(seed), "instruction": instruction, "neutral_prompt": cfg.neutral_prompt, "config": asdict(cfg), "critical_indices": critical, "generated_tokens": int(edited_state.metadata["generated_tokens"]), "source_conditioning_tokens": int(edited_state.metadata["source_conditioning_tokens"]), "token_mask": mask.cpu().tolist(), "mask_scores": scores.cpu().tolist(), "reward_selected": bool(used and candidate_index is None), "coupled_sde": "preservation/edit share noise outside edit mask; edited candidates use independent noise inside edit mask", "preservation": preservation.metadata(), "winner": winner.metadata()}
+    return TrajectoryBundle(preservation, pilot_e, winner, mask, scores, records, index, rewards, metadata, images, preservation_state, edited_state)
 
 
-def load_reward_factory(spec: str) -> RewardScorer:
-    if ":" not in spec:
-        raise ValueError("reward factory must use module:attribute syntax")
-    module_name, attribute = spec.split(":", 1)
-    obj = getattr(importlib.import_module(module_name), attribute)
-    scorer = obj() if callable(obj) else obj
-    if not hasattr(scorer, "score"):
-        scorer = CallableRewardScorer(scorer)
-    return scorer
+def load_reward_factory(spec):
+    if ":" not in spec: raise ValueError("reward factory must use module:attribute syntax")
+    module, name = spec.split(":", 1); obj = getattr(importlib.import_module(module), name); scorer = obj() if callable(obj) else obj
+    return scorer if hasattr(scorer, "score") else CallableRewardScorer(scorer)
 
 
-def save_bundle_metadata(bundle: TrajectoryBundle, path: str | Path) -> None:
-    payload = dict(bundle.metadata)
-    payload.update({"winner_index": bundle.winner_index, "rewards": bundle.rewards, "branch_records": bundle.branch_records})
+def save_bundle_metadata(bundle, path):
+    payload = {k: v for k, v in bundle.metadata.items()}; payload.update({"winner_index": bundle.winner_index, "rewards": bundle.rewards, "branch_records": bundle.branch_records})
     Path(path).write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=str) + "\n", encoding="utf-8")
 
 
-def save_bundle_tensors(bundle: TrajectoryBundle, path: str | Path) -> None:
-    torch.save({"preservation_states": bundle.preservation.states, "preservation_velocities": bundle.preservation.velocities, "winner_states": bundle.winner.states, "winner_velocities": bundle.winner.velocities, "token_mask": bundle.token_mask.cpu(), "mask_scores": bundle.mask_scores.cpu()}, path)
+def save_bundle_tensors(bundle, path):
+    torch.save({"preservation_states": bundle.preservation.states, "winner_states": bundle.winner.states, "preservation_velocities": bundle.preservation.velocities, "winner_velocities": bundle.winner.velocities, "preservation_residuals": bundle.preservation.residuals, "reward_residuals": bundle.winner.residuals, "token_mask": bundle.token_mask.cpu(), "mask_scores": bundle.mask_scores.cpu()}, path)
 
 
-__all__ = ["CallableRewardScorer", "ContinuousStrengthConfig", "RewardScorer", "RewardUnavailable", "TrajectoryBundle", "TrajectoryTrace", "build_bundle", "deterministic_trace", "estimate_edit_token_mask", "generate_early_branches", "load_reward_factory", "rollout_strengths", "save_bundle_metadata", "save_bundle_tensors", "select_winner"]
+__all__ = ["CallableRewardScorer", "ContinuousStrengthConfig", "RewardScorer", "RewardUnavailable", "TrajectoryBundle", "TrajectoryTrace", "build_bundle", "deterministic_trace", "estimate_edit_token_mask", "generate_coupled_branches", "load_reward_factory", "rollout_strengths", "save_bundle_metadata", "save_bundle_tensors", "select_winner", "strength_step"]

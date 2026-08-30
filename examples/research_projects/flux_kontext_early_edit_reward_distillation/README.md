@@ -17,7 +17,16 @@ The preservation trajectory uses the fixed neutral prompt
 `preserve the source image without any edit` and reuses the edited trajectory's
 initial latent. This is a runnable approximation, not an oracle preservation
 velocity. Editing masks are estimated from normalized early generated-token
-differences; source conditioning tokens are never branched.
+differences; source conditioning tokens are never branched. At configured
+critical transitions, preservation receives shared noise and edited states use
+the same noise outside the edit mask plus independent noise inside it. The
+selected branch residual is cached as `winner_state - deterministic_edit_state`.
+
+Strength rollout re-evaluates both model velocities on the current interpolated
+state, then applies `v_preserve + s * (v_edit - v_preserve)` and the residual
+`(1-s) * preservation_residual + s * reward_residual`. Thus strength scans do
+not resample and do not replay velocities cached at other states. Set
+`--critical-step-indices 1,2` to override the fallback critical transitions.
 
 Run a single sample with a reward factory:
 
