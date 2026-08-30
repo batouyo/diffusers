@@ -33,7 +33,7 @@ class KontextState:
     metadata: dict[str, Any]
 
 
-def _schedule(pipe: Any, steps: int, device: torch.device, image_tokens: int) -> torch.Tensor:
+def _schedule(pipe: Any, steps: int, device: torch.device, image_tokens: int) -> tuple[torch.Tensor, float]:
     from diffusers.pipelines.flux.pipeline_flux_kontext import calculate_shift, retrieve_timesteps
 
     sigmas = np.linspace(1.0, 1.0 / steps, steps)
@@ -46,7 +46,7 @@ def _schedule(pipe: Any, steps: int, device: torch.device, image_tokens: int) ->
         config.get("max_shift", 1.15),
     )
     timesteps, _ = retrieve_timesteps(pipe.scheduler, steps, device, sigmas=sigmas, mu=mu)
-    return timesteps
+    return timesteps, float(mu)
 
 
 @torch.inference_mode()
@@ -80,7 +80,7 @@ def prepare_state(
     if image_latents is None or image_ids is None:
         raise RuntimeError("FLUX-Kontext did not return source image conditioning latents")
     all_image_ids = torch.cat([latent_ids, image_ids], dim=0)
-    timesteps = _schedule(pipe, steps, device, latents.shape[1])
+    timesteps, scheduler_mu = _schedule(pipe, steps, device, latents.shape[1])
     guidance = torch.full((latents.shape[0],), guidance_scale, device=device, dtype=torch.float32)
     return KontextState(
         latents=latents, image_latents=image_latents, image_ids=all_image_ids,
@@ -88,6 +88,7 @@ def prepare_state(
         timesteps=timesteps, height=height, width=width, dtype=latents.dtype,
         metadata={"seed": int(seed), "guidance_scale": float(guidance_scale), "steps": int(steps),
                   "resolution": geometry, "source_original_size": [source.width, source.height],
+                  "scheduler_mu": scheduler_mu,
                   "generated_tokens": int(latents.shape[1]),
                   "source_conditioning_tokens": int(image_latents.shape[1]),
                   "text_tokens": int(prompt_embeds.shape[1])},
@@ -170,10 +171,6 @@ def branch_step(
 
 @torch.inference_mode()
 def deterministic_rollout(pipe: Any, state: KontextState, candidates: torch.Tensor, start_step: int) -> torch.Tensor:
-    # Some fused attention kernels are not bitwise stable across batch rows.
-    # Sequential rows make alpha=0 an auditable native-baseline equivalence test.
-    if candidates.shape[0] > 1:
-        return torch.cat([deterministic_rollout(pipe, state, candidates[index:index + 1], start_step) for index in range(candidates.shape[0])], dim=0)
     current = candidates
     for index in range(start_step, len(state.timesteps)):
         current = ode_step(pipe, current, velocity(pipe, state, current, state.timesteps[index]), state.timesteps[index])
