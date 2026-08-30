@@ -1,5 +1,6 @@
 """Pure tensor/numerical pieces used by the FLUX-Kontext experiment."""
 from __future__ import annotations
+import hashlib
 import math
 from dataclasses import dataclass
 from typing import Callable, Sequence
@@ -18,6 +19,41 @@ def rf_sde_step(sample: torch.Tensor, model_output: torch.Tensor, sigma: float, 
     drift = prediction if first_step else 2.0 * prediction + x / (1.0 - sigma)
     updated = x + (sigma_next - sigma) * drift + coefficient * brownian
     return updated.to(sample.dtype), {"sigma": float(sigma), "sigma_next": float(sigma_next), "diffusion_coeff": float(coefficient), "noise_mean": float(brownian.mean()), "noise_std": float(brownian.std())}
+
+def native_euler_sde_step(sample: torch.Tensor, model_output: torch.Tensor, sigma: float, sigma_next: float, noise: torch.Tensor, alpha: float = 0.0, diffusion_scale: float = 1.0, first_step: bool = False) -> tuple[torch.Tensor, dict[str, float]]:
+    """Kontext-native Euler mean plus calibrated stochastic perturbation.
+
+    The transformer output is a native velocity.  It must not be interpreted
+    as the score/drift expected by the official syncSDE inversion scheduler.
+    """
+    if alpha < 0.0 or diffusion_scale < 0.0:
+        raise ValueError("alpha and diffusion_scale must be non-negative")
+    coefficient = rf_diffusion_coefficient(sigma, sigma_next, first_step)
+    x = sample.float()
+    prediction = model_output.float()
+    brownian = noise.float()
+    mean = x + (float(sigma_next) - float(sigma)) * prediction
+    perturbation = float(alpha) * float(diffusion_scale) * coefficient * brownian
+    updated = (mean + perturbation).to(sample.dtype)
+    return updated, {"sigma": float(sigma), "sigma_next": float(sigma_next), "diffusion_coeff": float(coefficient), "alpha": float(alpha), "diffusion_scale": float(diffusion_scale), "mean_norm": float(mean.norm().item()), "noise_norm": float(brownian.norm().item()), "perturbation_norm": float(perturbation.norm().item()), "finite": bool(torch.isfinite(updated).all().item())}
+
+def tensor_hash(value: torch.Tensor) -> str:
+    return hashlib.sha256(value.detach().float().cpu().contiguous().numpy().tobytes()).hexdigest()[:16]
+
+def regional_delta_norms(candidate: torch.Tensor, mean: torch.Tensor, edit_mask: torch.Tensor) -> dict[str, float]:
+    mask = edit_mask.to(device=candidate.device, dtype=torch.bool).reshape(1, -1, 1)
+    delta = (candidate.float() - mean.float())
+    preserve = delta.masked_select(~mask.expand_as(delta))
+    edit = delta.masked_select(mask.expand_as(delta))
+    return {"delta_norm": float(delta.norm().item()), "preserve_delta_norm": float(preserve.norm().item()), "edit_delta_norm": float(edit.norm().item())}
+
+def noise_correlations(shared: torch.Tensor, mixed: torch.Tensor, independent: torch.Tensor, edit_mask: torch.Tensor) -> dict[str, float]:
+    mask = edit_mask.to(device=shared.device, dtype=torch.bool).reshape(1, -1, 1).expand_as(shared)
+    def corr(a: torch.Tensor, b: torch.Tensor) -> float:
+        a, b = a.flatten().float(), b.flatten().float()
+        if a.numel() < 2 or a.std() == 0 or b.std() == 0: return float("nan")
+        return float(torch.corrcoef(torch.stack([a, b]))[0, 1].item())
+    return {"preserve_shared_correlation": corr(shared.masked_select(~mask), mixed.masked_select(~mask)), "edit_independent_correlation": corr(independent.masked_select(mask), mixed.masked_select(mask))}
 
 def coupled_noise(shared: torch.Tensor, independent: torch.Tensor, edit_mask: torch.Tensor, rho: float = 0.0) -> torch.Tensor:
     if shared.shape != independent.shape:

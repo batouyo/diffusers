@@ -14,7 +14,7 @@ import numpy as np
 import torch
 from PIL import Image
 
-from .core import coupled_noise, critical_nonzero_steps, rf_sde_step
+from .core import coupled_noise, critical_nonzero_steps, native_euler_sde_step, noise_correlations, regional_delta_norms, rf_sde_step, tensor_hash
 from .resolution import resolve_dimensions
 
 
@@ -135,6 +135,9 @@ def branch_step(
     seed: int,
     *,
     candidates: int = 4,
+    mode: str = "native_euler_sde",
+    alpha: float = 0.05,
+    diffusion_scale: float = 1.0,
 ) -> tuple[torch.Tensor, dict[str, Any]]:
     if candidates != 4:
         raise ValueError("the minimal validation fixes K=4")
@@ -148,11 +151,21 @@ def branch_step(
     if token_mask.shape[1] != latents.shape[1]:
         raise ValueError(f"token mask length {token_mask.shape[1]} does not match generated tokens {latents.shape[1]}")
     noise = coupled_noise(shared.expand_as(independent), independent, token_mask, rho=0.0)
+    if mode not in {"native_euler_sde", "official_syncsde_reference"}:
+        raise ValueError(f"unknown branch mode: {mode}")
     outputs = []
+    diagnostics = []
+    mean = (latents.float() + (sigma_next - sigma) * prediction.float()).to(latents.dtype)
     for index in range(candidates):
-        outputs.append(rf_sde_step(latents, prediction, sigma, sigma_next, noise[index], first_step=step_index == 0)[0])
+        if mode == "native_euler_sde":
+            candidate, diagnostic = native_euler_sde_step(latents, prediction, sigma, sigma_next, noise[index], alpha=alpha, diffusion_scale=diffusion_scale, first_step=step_index == 0)
+        else:
+            candidate, diagnostic = rf_sde_step(latents, prediction, sigma, sigma_next, noise[index], first_step=step_index == 0)
+            diagnostic.update({"alpha": 1.0, "diffusion_scale": 1.0, "mean_norm": float(mean.float().norm().item()), "noise_norm": float(noise[index].norm().item()), "perturbation_norm": float((candidate.float() - mean.float()).norm().item()), "finite": bool(torch.isfinite(candidate).all().item())})
+        outputs.append(candidate)
+        diagnostics.append({**diagnostic, **regional_delta_norms(candidate, mean, token_mask[0]), **noise_correlations(shared, noise[index:index + 1], independent[index:index + 1], token_mask)})
     coeff = 0.0 if step_index == 0 else float((2 * sigma / (1 - sigma) * (sigma - sigma_next)) ** 0.5)
-    return torch.cat(outputs, dim=0), {"step_index": int(step_index), "timestep": float(timestep), "sigma": sigma, "sigma_next": sigma_next, "diffusion_coeff": coeff, "seed": int(seed), "shared_noise_shape": list(shared.shape), "candidate_noise_shape": list(independent.shape)}
+    return torch.cat(outputs, dim=0), {"step_index": int(step_index), "timestep": float(timestep), "sigma": sigma, "sigma_next": sigma_next, "diffusion_coeff": coeff, "seed": int(seed), "mode": mode, "alpha": float(alpha), "diffusion_scale": float(diffusion_scale), "branch_state_hash": tensor_hash(latents), "shared_noise_shape": list(shared.shape), "candidate_noise_shape": list(independent.shape), "candidate_diagnostics": diagnostics, "all_finite": all(item["finite"] for item in diagnostics)}
 
 
 @torch.inference_mode()
@@ -180,21 +193,28 @@ def two_stage_search(
     *,
     seed: int,
     repeat_score: Callable[[torch.Tensor], list[float]] | None = None,
+    mode: str = "native_euler_sde",
+    alpha: float = 0.05,
+    diffusion_scale: float = 1.0,
+    stage_callback: Callable[[int, int, torch.Tensor, list[float]], None] | None = None,
 ) -> tuple[torch.Tensor, list[dict[str, Any]]]:
     selected = critical_nonzero_steps([float(x) for x in pipe.scheduler.sigmas.detach().cpu().flatten().tolist()])[:2]
     if len(selected) < 2:
         raise RuntimeError("scheduler exposed fewer than two non-zero diffusion transitions")
     current = state.latents
     current_step = 0
+    final_terminal = None
     records = []
     for stage, item in enumerate(selected, start=1):
         step_index = int(item["index"])
         current = rollout_until(pipe, state, current, current_step, step_index)
-        candidates, branch_meta = branch_step(pipe, state, current, step_index, token_mask, seed + stage)
+        candidates, branch_meta = branch_step(pipe, state, current, step_index, token_mask, seed + stage, mode=mode, alpha=alpha, diffusion_scale=diffusion_scale)
         terminal = deterministic_rollout(pipe, state, candidates, step_index + 1)
         rewards = [float(x) for x in score(terminal)]
         if len(rewards) != 4:
             raise ValueError("score must return one value per candidate")
+        if stage_callback is not None:
+            stage_callback(stage, step_index, terminal, rewards)
         top2 = sorted(range(4), key=lambda index: (-rewards[index], index))[:2]
         repeated = [float(x) for x in repeat_score(terminal[top2]) ] if repeat_score is not None else []
         means = rewards[:]
@@ -207,5 +227,8 @@ def two_stage_search(
         winner = max(range(4), key=lambda index: (means[index], -index))
         current = candidates[winner:winner + 1]
         current_step = step_index + 1
+        final_terminal = terminal[winner:winner + 1]
         records.append({"stage": stage, "branch_step_index": step_index, "post_branch_step_index": step_index + 1, "winner_index": winner, "rewards": rewards, "top2": top2, "repeated_rewards": repeated, "mean_rewards": means, **branch_meta})
-    return current, records
+    if final_terminal is None:
+        raise RuntimeError("two-stage search did not produce a terminal state")
+    return final_terminal, records

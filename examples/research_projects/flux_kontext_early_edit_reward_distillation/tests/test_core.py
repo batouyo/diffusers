@@ -1,6 +1,6 @@
 import math
 import torch
-from early_edit_reward_distillation.core import align_image_token_mask, coupled_noise, critical_nonzero_steps, greedy_two_stage_branch, rf_sde_step
+from early_edit_reward_distillation.core import align_image_token_mask, coupled_noise, critical_nonzero_steps, greedy_two_stage_branch, native_euler_sde_step, noise_correlations, rf_sde_step
 from early_edit_reward_distillation.lora import masked_residual, timestep_gate
 
 def test_first_step_is_deterministic():
@@ -13,6 +13,24 @@ def test_rf_formula_and_critical_steps():
     out, meta = rf_sde_step(x, v, .8, .7, noise); c = math.sqrt(2*.8/.2*.1); expected = x + (-.1)*(2*v + x/.2) + c*noise
     assert torch.allclose(out, expected) and math.isclose(meta["diffusion_coeff"], c, rel_tol=1e-12)
     assert [r["index"] for r in critical_nonzero_steps([1., .9, .8, .7])] == [1, 2]
+
+def test_native_euler_alpha_zero_matches_ode_mean():
+    sample = torch.randn(1, 4, 2)
+    velocity = torch.randn_like(sample)
+    noise = torch.randn_like(sample)
+    updated, meta = native_euler_sde_step(sample, velocity, .9, .8, noise, alpha=0.0)
+    expected = sample - .1 * velocity
+    assert torch.equal(updated, expected.to(updated.dtype))
+    assert meta["perturbation_norm"] == 0.0
+
+def test_noise_correlation_separates_preserve_and_edit_regions():
+    shared = torch.randn(1, 32, 2)
+    independent = torch.randn(1, 32, 2)
+    mask = torch.zeros(1, 32, dtype=torch.bool); mask[:, 16:] = True
+    mixed = coupled_noise(shared, independent, mask)
+    stats = noise_correlations(shared, mixed, independent, mask)
+    assert stats["preserve_shared_correlation"] > .999
+    assert abs(stats["edit_independent_correlation"] - 1.) < 1e-6
 
 def test_selective_noise_correlation_endpoints():
     torch.manual_seed(3); shared = torch.randn(1, 10000, 1); independent = torch.randn_like(shared); edit = torch.zeros_like(shared); edit[:, :5000] = 1
