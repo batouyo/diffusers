@@ -1,0 +1,82 @@
+[
+  {
+    "sample_id": "pie_8_change_background_80_814000000007",
+    "category": "8_change_background_80",
+    "shard": "/data15/hyp/dataset/PIE-Bench/8_change_background_80/V1-00000-of-00001.parquet",
+    "row_index": 37,
+    "instruction": "a painting of [moon] rising above the sea level",
+    "source_prompt": "a painting of sun rising above the sea level",
+    "target_description": "a painting of [moon] rising above the sea level",
+    "mask_area": 0.0538177490234375
+  },
+  {
+    "sample_id": "pie_3_delete_object_80_324000000000",
+    "category": "3_delete_object_80",
+    "shard": "/data15/hyp/dataset/PIE-Bench/3_delete_object_80/V1-00000-of-00001.parquet",
+    "row_index": 70,
+    "instruction": "a large green leaf",
+    "source_prompt": "a single pink lotus flower is growing in the middle of a large green leaf",
+    "target_description": "a large green leaf",
+    "mask_area": 0.15168380737304688
+  },
+  {
+    "sample_id": "pie_6_change_attribute_color_40_621000000001",
+    "category": "6_change_attribute_color_40",
+    "shard": "/data15/hyp/dataset/PIE-Bench/6_change_attribute_color_40/V1-00000-of-00001.parquet",
+    "row_index": 21,
+    "instruction": "a [blue] and [red] french bulldog sitting on a blanket",
+    "source_prompt": "a black and white french bulldog sitting on a blanket",
+    "target_description": "a [blue] and [red] french bulldog sitting on a blanket",
+    "mask_area": 0.38521575927734375
+  },
+  {
+    "sample_id": "pie_4_change_attribute_content_40_413000000002",
+    "category": "4_change_attribute_content_40",
+    "shard": "/data15/hyp/dataset/PIE-Bench/4_change_attribute_content_40/V1-00000-of-00001.parquet",
+    "row_index": 12,
+    "instruction": "couple in a blanket on the couch with a [extinguished fire]",
+    "source_prompt": "couple in a blanket on the couch with a burning fire",
+    "target_description": "couple in a blanket on the couch with a [extinguished fire]",
+    "mask_area": 0.042667388916015625
+  },
+  {
+    "sample_id": "pie_3_delete_object_80_312000000008",
+    "category": "3_delete_object_80",
+    "shard": "/data15/hyp/dataset/PIE-Bench/3_delete_object_80/V1-00000-of-00001.parquet",
+    "row_index": 18,
+    "instruction": "a young woman driving an old car",
+    "source_prompt": "a young woman in sunglasses driving an old car",
+    "target_description": "a young woman driving an old car",
+    "mask_area": 0.02220916748046875
+  },
+  {
+    "sample_id": "pie_8_change_background_80_822000000000",
+    "category": "8_change_background_80",
+    "shard": "/data15/hyp/dataset/PIE-Bench/8_change_background_80/V1-00000-of-00001.parquet",
+    "row_index": 50,
+    "instruction": "a beautiful young woman with [blue background]",
+    "source_prompt": "a beautiful young woman with clean background",
+    "target_description": "a beautiful young woman with [blue background]",
+    "mask_area": 0.23865890502929688
+  },
+  {
+    "sample_id": "pie_3_delete_object_80_321000000004",
+    "category": "3_delete_object_80",
+    "shard": "/data15/hyp/dataset/PIE-Bench/3_delete_object_80/V1-00000-of-00001.parquet",
+    "row_index": 44,
+    "instruction": "an older man sitting on a bench",
+    "source_prompt": "an older man sitting on a bench with a dog",
+    "target_description": "an older man sitting on a bench",
+    "mask_area": 0.0575714111328125
+  },
+  {
+    "sample_id": "pie_0_random_140_000000000019",
+    "category": "0_random_140",
+    "shard": "/data15/hyp/dataset/PIE-Bench/0_random_140/V1-00000-of-00001.parquet",
+    "row_index": 19,
+    "instruction": "white [cat] on [green grass]",
+    "source_prompt": "white tiger on brown ground",
+    "target_description": "white [cat] on [green grass]",
+    "mask_area": 0.32585906982421875
+  }
+]
