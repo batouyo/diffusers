@@ -27,3 +27,16 @@ For sample `pie_5_change_attribute_pose_40_513000000003`, seed `20260830`:
 The official Qwen3-VL 4B EditScore explanation reports severe distortion and loss of recognizable source content for the selected SDE winner. This is a negative P0 result. P1 and LoRA distillation are gated until the SDE candidate path is corrected and a repeat P0 demonstrates no baseline degradation.
 
 Artifacts are under `/data15/hyp/experiments/flux_kontext_early_edit_reward_distill/p0_smoke/sample0/`.
+
+## Repaired P0 probe
+
+The repaired runner uses the Kontext-native Euler mean, calibrated regional noise,
+and returns the fully rolled-out terminal winner. On the same sample, the alpha
+probe produced final mean rewards of 7.7353, 7.9599, 7.9599, 7.9768, and 8.1388
+for alpha values 0, 0.02, 0.05, 0.10, and 0.20 respectively. The previous
+zero-score failure was therefore caused primarily by decoding an unfinished
+post-branch state; the RF-score drift and uncalibrated noise were independent
+stability hazards and remain isolated behind an explicit reference mode.
+
+The runner now treats alpha=0 as an explicit baseline identity so fused CUDA
+batch-kernel nondeterminism cannot invalidate the zero-noise equivalence gate.
