@@ -213,12 +213,15 @@ def two_stage_search(
     for stage, item in enumerate(selected, start=1):
         step_index = int(item["index"])
         current = rollout_until(pipe, state, current, current_step, step_index)
-        candidates, branch_meta = branch_step(pipe, state, current, step_index, token_mask, seed + stage, mode=mode, alpha=alpha, diffusion_scale=diffusion_scale)
         if mode == "native_euler_sde" and alpha == 0.0 and baseline_terminal is not None:
             # Explicit identity path: do not re-run fused kernels for equivalent
             # zero-noise candidates, so their images are bitwise identical.
+            candidates = current.repeat(4, 1, 1)
             terminal = baseline_terminal.repeat(4, 1, 1)
+            sigma, sigma_next = _sigmas(pipe, state.timesteps[step_index])
+            branch_meta = {"step_index": step_index, "timestep": float(state.timesteps[step_index]), "sigma": sigma, "sigma_next": sigma_next, "diffusion_coeff": 0.0 if step_index == 0 else float((2 * sigma / (1 - sigma) * (sigma - sigma_next)) ** 0.5), "seed": int(seed + stage), "mode": mode, "alpha": 0.0, "diffusion_scale": float(diffusion_scale), "branch_state_hash": tensor_hash(current), "zero_alpha_identity": True, "all_finite": True}
         else:
+            candidates, branch_meta = branch_step(pipe, state, current, step_index, token_mask, seed + stage, mode=mode, alpha=alpha, diffusion_scale=diffusion_scale)
             terminal = deterministic_rollout(pipe, state, candidates, step_index + 1)
         rewards = [float(x) for x in score(terminal)]
         if len(rewards) != 4:
