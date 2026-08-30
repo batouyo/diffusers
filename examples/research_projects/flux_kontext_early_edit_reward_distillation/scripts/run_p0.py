@@ -88,7 +88,7 @@ def main() -> None:
             stage_dir.mkdir(parents=True, exist_ok=True)
             for index, image in enumerate(decode(pipe, state, terminal)):
                 image.save(stage_dir / f"candidate_{index:02d}_reward_{rewards[index]:.4f}.png")
-        candidate_winner, candidate_records = two_stage_search(pipe, state, token_mask, score, seed=args.seed, repeat_score=repeat_score, mode=args.branch_mode, alpha=alpha, diffusion_scale=args.diffusion_scale, stage_callback=save_stage)
+        candidate_winner, candidate_records = two_stage_search(pipe, state, token_mask, score, seed=args.seed, repeat_score=repeat_score, mode=args.branch_mode, alpha=alpha, diffusion_scale=args.diffusion_scale, stage_callback=save_stage, baseline_terminal=baseline)
         final_reward = float(candidate_records[-1]["mean_rewards"][candidate_records[-1]["winner_index"]])
         probe_results.append({"alpha": alpha, "final_reward": final_reward, "records": candidate_records})
         if final_reward > best_reward:

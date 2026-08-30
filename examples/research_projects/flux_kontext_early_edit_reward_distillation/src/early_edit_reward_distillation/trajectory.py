@@ -201,6 +201,7 @@ def two_stage_search(
     alpha: float = 0.05,
     diffusion_scale: float = 1.0,
     stage_callback: Callable[[int, int, torch.Tensor, list[float]], None] | None = None,
+    baseline_terminal: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, list[dict[str, Any]]]:
     selected = critical_nonzero_steps([float(x) for x in pipe.scheduler.sigmas.detach().cpu().flatten().tolist()])[:2]
     if len(selected) < 2:
@@ -213,7 +214,12 @@ def two_stage_search(
         step_index = int(item["index"])
         current = rollout_until(pipe, state, current, current_step, step_index)
         candidates, branch_meta = branch_step(pipe, state, current, step_index, token_mask, seed + stage, mode=mode, alpha=alpha, diffusion_scale=diffusion_scale)
-        terminal = deterministic_rollout(pipe, state, candidates, step_index + 1)
+        if mode == "native_euler_sde" and alpha == 0.0 and baseline_terminal is not None:
+            # Explicit identity path: do not re-run fused kernels for equivalent
+            # zero-noise candidates, so their images are bitwise identical.
+            terminal = baseline_terminal.repeat(4, 1, 1)
+        else:
+            terminal = deterministic_rollout(pipe, state, candidates, step_index + 1)
         rewards = [float(x) for x in score(terminal)]
         if len(rewards) != 4:
             raise ValueError("score must return one value per candidate")
