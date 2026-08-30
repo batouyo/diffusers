@@ -170,6 +170,10 @@ def branch_step(
 
 @torch.inference_mode()
 def deterministic_rollout(pipe: Any, state: KontextState, candidates: torch.Tensor, start_step: int) -> torch.Tensor:
+    # Some fused attention kernels are not bitwise stable across batch rows.
+    # Sequential rows make alpha=0 an auditable native-baseline equivalence test.
+    if candidates.shape[0] > 1:
+        return torch.cat([deterministic_rollout(pipe, state, candidates[index:index + 1], start_step) for index in range(candidates.shape[0])], dim=0)
     current = candidates
     for index in range(start_step, len(state.timesteps)):
         current = ode_step(pipe, current, velocity(pipe, state, current, state.timesteps[index]), state.timesteps[index])
