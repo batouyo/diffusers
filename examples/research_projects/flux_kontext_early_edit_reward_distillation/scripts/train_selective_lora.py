@@ -14,7 +14,7 @@ def main():
     p=argparse.ArgumentParser(); p.add_argument('--model',required=True); p.add_argument('--cache',required=True); p.add_argument('--output',required=True); p.add_argument('--steps',type=int,default=250); p.add_argument('--save-every',type=int,default=50); p.add_argument('--lr',type=float,default=5e-5); p.add_argument('--device',default='cuda'); args=p.parse_args()
     device=torch.device(args.device); cache=Path(args.cache); out=Path(args.output); out.mkdir(parents=True,exist_ok=True)
     pipe=FluxKontextPipeline.from_pretrained(args.model,torch_dtype=torch.bfloat16,local_files_only=True).to(device); transformer=pipe.transformer
-    transformer.set_attention_backend('native')
+    transformer.set_attention_backend('_native_math')
     for param in transformer.parameters(): param.requires_grad_(False)
     config=LoraConfig(r=4,lora_alpha=4,lora_dropout=0.0,bias='none',target_modules=['to_q','to_k','to_v','to_out.0'])
     transformer.add_adapter(config)
