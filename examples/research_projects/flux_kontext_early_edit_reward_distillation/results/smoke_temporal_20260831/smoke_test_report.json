@@ -1,5 +1,5 @@
 {
-  "commit": "5d912e01e",
+  "commit": "63826519a",
   "sample_id": "pie_8_change_background_80_814000000007",
   "seed": 20260830,
   "config": {
@@ -23,22 +23,20 @@
     "relative_l2": 0.0
   },
   "s1_winner_parity": {
-    "max_abs_error": 0.34375,
-    "relative_l2": 0.011540407314896584
+    "max_abs_error": 0.0,
+    "relative_l2": 0.0
   },
   "state_residual_strength_replay": false,
   "all_tensors_finite": true,
-  "passed": false,
+  "passed": true,
+  "reuse_full_edit_endpoint": false,
   "strength_output_order": [
     "0.0",
     "0.5",
     "1.0"
   ],
-  "s1_first_difference_step": 1,
   "s1_parity_diagnostic": {
-    "first_difference_step": 1,
-    "step_0_max_abs_error": 0.0,
-    "step_1_max_abs_error": 0.015625,
-    "note": "No algorithm change; first divergence is at search step 1 and accumulates thereafter."
+    "first_difference_step": null,
+    "note": "Shared velocity-space selected-direction deployment; no timestep divergence observed."
   }
 }
