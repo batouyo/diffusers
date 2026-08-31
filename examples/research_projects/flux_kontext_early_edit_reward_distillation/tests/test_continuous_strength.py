@@ -5,6 +5,7 @@ from PIL import Image
 import pytest
 
 from early_edit_reward_distillation.continuous_strength import (
+    _critical_indices,
     CallableRewardScorer,
     ContinuousStrengthConfig,
     RewardUnavailable,
@@ -27,6 +28,8 @@ def trace(prompt, values):
 def test_config_defaults_and_validation():
     cfg = ContinuousStrengthConfig()
     assert cfg.num_candidates == 4
+    assert cfg.steps == 30 and cfg.guidance_scale == 2.5
+    assert list(range(cfg.edit_strength_step_count)) == [0, 1]
     assert cfg.strengths == (0.0, 0.25, 0.5, 0.75, 1.0)
     with pytest.raises(ValueError):
         ContinuousStrengthConfig(num_candidates=2)
@@ -119,3 +122,12 @@ def test_strength_rejects_out_of_range():
     winner = trace("e", [[[0.0]], [[2.0]]])
     with pytest.raises(ValueError):
         rollout_strengths(None, preservation, winner, [-0.1])
+
+def test_search_step_is_earliest_valid_and_inside_strength_window():
+    state = type("State", (), {"metadata": {"effective_schedule": {"effective_sigmas": [1.0, 0.9, 0.8, 0.7]}}})()
+    assert _critical_indices(state, ContinuousStrengthConfig()) == [1]
+    with pytest.raises(ValueError, match="edit-strength window"):
+        _critical_indices(
+            state,
+            ContinuousStrengthConfig(search_step_indices=(2,)),
+        )

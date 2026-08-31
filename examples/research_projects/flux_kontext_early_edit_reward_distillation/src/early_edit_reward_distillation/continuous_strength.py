@@ -1,9 +1,9 @@
 """Training-free coupled continuous-strength editing for FLUX-Kontext.
 
 The neutral preservation prompt is an engineering approximation: Kontext does
-not expose an oracle source-preservation velocity. Early SDE residuals select a
-single edit-direction correction; continuous strength is controlled only by the
-short VeloEdit-style velocity interpolation window.
+not expose an oracle source-preservation velocity. Early SDE uses preservation-aware
+coupling during branch search to select a single edit-direction correction;
+continuous strength is controlled only by the short VeloEdit-style velocity window.
 """
 from __future__ import annotations
 
@@ -43,8 +43,8 @@ class ContinuousStrengthConfig:
     neutral_prompt: str = "preserve the source image without any edit"
     height: int = 512
     width: int = 512
-    steps: int = 28
-    guidance_scale: float = 3.5
+    steps: int = 30
+    guidance_scale: float = 2.5
     critical_steps: int = 1
     critical_step_indices: tuple[int, ...] | None = None
     preserve_step_count: int = 4
@@ -166,6 +166,12 @@ def _critical_indices(state_or_pipe: Any, cfg: ContinuousStrengthConfig) -> list
     indices = list(requested) if requested is not None else [int(x["index"]) for x in valid[: cfg.critical_steps]]
     if len(indices) != 1 or len(indices) != len(set(indices)) or any(i not in valid_indices for i in indices):
         raise ValueError("continuous-strength search requires one unique non-zero scheduler transition")
+    if cfg.enable_search:
+        search_step = int(indices[0])
+        if search_step >= int(cfg.edit_strength_step_count):
+            raise ValueError("search step must be inside the edit-strength window")
+        if search_step >= int(cfg.preserve_step_count):
+            raise ValueError("search step must be inside the preserve window")
     return sorted(indices)
 
 
@@ -326,10 +332,10 @@ def generate_coupled_branches(pipe, preservation_state, edited_state, token_mask
             for j in range(4):
                 raw_candidate, diag = native_euler_sde_step(e, ve, a, b, mixed[j], alpha=cfg.alpha, diffusion_scale=cfg.diffusion_scale, first_step=i == 0)
                 raw_residual = raw_candidate.float() - e_mean.float()
-                delta_residual = raw_residual - p_residual.float()
-                candidate = (e_mean.float() + delta_residual).to(e.dtype)
+                relative_residual = raw_residual - p_residual.float()
+                candidate = (e_mean.float() + relative_residual).to(e.dtype)
                 candidates.append(candidate)
-                diagnostics.append({**diag, "candidate_index": j, "candidate_seed": int(seed + i), "raw_state_hash": tensor_hash(raw_candidate), "corrected_state_hash": tensor_hash(candidate), "raw_residual_norm": float(raw_residual.norm().item()), "delta_residual_norm": float(delta_residual.norm().item()), "finite": bool(torch.isfinite(candidate).all().item())})
+                diagnostics.append({**diag, "candidate_index": j, "candidate_seed": int(seed + i), "raw_state_hash": tensor_hash(raw_candidate), "corrected_state_hash": tensor_hash(candidate), "raw_residual_norm": float(raw_residual.norm().item()), "relative_residual_norm": float(relative_residual.norm().item()), "finite": bool(torch.isfinite(candidate).all().item())})
             if cfg.enable_reward:
                 terminal_batch = _terminal_batch(
                     pipe,
@@ -361,8 +367,8 @@ def generate_coupled_branches(pipe, preservation_state, edited_state, token_mask
             else:
                 winner_index, rewards, used = 0, [float("nan")] * 4, False
             final_rewards, used_reward = rewards, used_reward or used
-            raw_winner = candidates[winner_index]
-            selected_residual = raw_winner.float() - e_mean.float()
+            selected_branch_candidate = candidates[winner_index]
+            selected_residual = selected_branch_candidate.float() - e_mean.float()
             selected_search_edit_mask = dynamic_edit_mask.detach().clone()
             selected_delta_velocity = (
                 selected_residual * selected_search_edit_mask.float()
@@ -377,7 +383,8 @@ def generate_coupled_branches(pipe, preservation_state, edited_state, token_mask
             reconstruction_target = e_mean + selected_residual * selected_search_edit_mask.float()
             reconstruction_error = (reconstruction.float() - reconstruction_target.float()).abs()
             p_residual = p_next - p_mean
-            e_residual = e_next.float() - e_mean.float() + p_residual.float()
+            e_residual = e_next.float() - e_mean.float()
+            relative_residual = e_residual.float() - p_residual.float()
             records.append({
                 "stage": 1,
                 "branch_step_index": i,
@@ -385,7 +392,9 @@ def generate_coupled_branches(pipe, preservation_state, edited_state, token_mask
                 "winner_index": winner_index,
                 "rewards": rewards,
                 "used_reward": used,
-                "reward_candidate_policy": "corrected_e_mean_plus_delta_residual",
+                "reward_candidate_policy": "reward_scores_full_corrected_branch; deploys_masked_edit_direction",
+                "reward_selected_branch": int(winner_index),
+                "deployed_edit_direction": "selected_edit_region_delta_velocity",
                 "seed": int(seed + i),
                 "sigma": a,
                 "sigma_next": b,
@@ -399,7 +408,7 @@ def generate_coupled_branches(pipe, preservation_state, edited_state, token_mask
                 "edited_noise_norm_mean": float(mixed.float().norm(dim=tuple(range(1, mixed.ndim))).mean()),
                 "preservation_residual_norm": float(p_residual.float().norm()),
                 "edited_residual_norm": float(e_residual.float().norm()),
-                "delta_residual_norm": float((e_residual.float() - p_residual.float()).norm()),
+                "relative_residual_norm": float(relative_residual.float().norm()),
                 **correlation,
                 "candidate_diagnostics": diagnostics,
             })
@@ -479,6 +488,13 @@ def rollout_strengths(
         raise ValueError("selected_search_step requires selected_delta_velocity")
     if selected_delta_velocity is not None and selected_search_edit_mask is None:
         raise ValueError("selected_delta_velocity requires selected_search_edit_mask")
+    if selected_delta_velocity is not None and selected_search_step is None:
+        raise ValueError("selected_delta_velocity requires selected_search_step")
+    if selected_search_step is not None:
+        if int(selected_search_step) < 0 or int(selected_search_step) >= int(edit_strength_step_count):
+            raise ValueError("selected search step must be inside the edit-strength window")
+        if int(selected_search_step) >= int(preserve_step_count):
+            raise ValueError("selected search step must be inside the preserve window")
     values = [float(v) for v in strengths]
     output = {}
     x = edited_state.latents.repeat(len(values), 1, 1)
@@ -604,7 +620,12 @@ def build_bundle(pipe, source, instruction, decode, scorer, *, seed, config=None
         "token_mask": mask.cpu().tolist(),
         "mask_scores": scores.cpu().tolist(),
         "reward_selected": bool(used and candidate_index is None),
-        "coupled_sde": "preservation/edit share noise outside edit mask; edited candidates use independent noise inside edit mask",
+        "search_stage_count": len(records),
+        "selected_correction_applied_once": bool(selected_delta_velocity is not None and selected_search_step is not None),
+        "s0_selected_correction_scale": 0.0,
+        "reward_selected_branch": None if not records else int(records[0]["reward_selected_branch"]),
+        "deployed_edit_direction": None if selected_delta_velocity is None else "selected_edit_region_delta_velocity",
+        "coupled_sde": "search-time preservation-aware coupling; shared preserve-region noise and independent edit-region exploration only during early branch search",
         "first_step_alignment": edited_state.metadata.get("first_step_alignment"),
         "selected_search_step": selected_search_step,
         "selected_search_edit_mask": None if selected_search_edit_mask is None else selected_search_edit_mask.cpu().tolist(),
@@ -665,7 +686,7 @@ def save_bundle_tensors(bundle, path):
             "preservation_velocities": bundle.preservation.velocities,
             "winner_velocities": bundle.winner.velocities,
             "preservation_residuals": bundle.preservation.residuals,
-            "reward_residuals": bundle.winner.residuals,
+            "edited_residuals": bundle.winner.residuals,
             "selected_delta_velocity": bundle.selected_delta_velocity,
             "selected_search_edit_mask": bundle.selected_search_edit_mask,
             "token_mask": bundle.token_mask.cpu(),

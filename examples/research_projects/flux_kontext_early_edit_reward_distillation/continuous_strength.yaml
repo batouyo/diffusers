@@ -1,14 +1,15 @@
 neutral_prompt: "preserve the source image without any edit"
 height: 512
 width: 512
-steps: 28
-guidance_scale: 3.5
+steps: 30
+guidance_scale: 2.5
 critical_steps: 1
 # Optional explicit scheduler transition indices. When omitted, the first
 # non-zero transitions are used as a fallback.
 critical_step_indices: null
 preserve_step_count: 4
 edit_strength_step_count: 2
+first_step_align_steps: 4
 generator_device: cpu
 num_candidates: 4
 alpha: 0.05

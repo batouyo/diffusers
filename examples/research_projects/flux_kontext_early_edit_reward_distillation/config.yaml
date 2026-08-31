@@ -1,7 +1,7 @@
 seed: 20260830
 resolution: 512
-num_inference_steps: 28
-guidance_scale: 3.5
+num_inference_steps: 30
+guidance_scale: 2.5
 branch_count: 4
 train_count: 16
 test_count: 8

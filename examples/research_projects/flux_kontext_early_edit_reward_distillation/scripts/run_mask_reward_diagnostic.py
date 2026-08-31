@@ -97,8 +97,8 @@ def summarize_records(bundle):
                 "unique_corrected_state_hashes": len(
                     {item.get("corrected_state_hash") for item in diagnostics}
                 ),
-                "delta_residual_norms": [
-                    item.get("delta_residual_norm") for item in diagnostics
+                "relative_residual_norms": [
+                    item.get("relative_residual_norm") for item in diagnostics
                 ],
                 "preserve_shared_correlation": record.get(
                     "preserve_shared_correlation"
