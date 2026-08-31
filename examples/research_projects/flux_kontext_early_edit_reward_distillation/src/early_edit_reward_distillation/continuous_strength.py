@@ -286,7 +286,7 @@ def generate_coupled_branches(pipe, preservation_state, edited_state, token_mask
                 diagnostics.append({**diag, "candidate_index": j, "candidate_seed": int(seed + i), "raw_state_hash": tensor_hash(raw_candidate), "corrected_state_hash": tensor_hash(candidate), "raw_residual_norm": float(raw_residual.norm().item()), "delta_residual_norm": float(delta_residual.norm().item()), "finite": bool(torch.isfinite(candidate).all().item())})
             if cfg.enable_reward:
                 terminal_batch = _terminal_batch(pipe, edited_state, torch.cat(candidates, dim=0), i + 1, source_latent=edited_state.image_latents, intervention_step_count=cfg.intervention_step_count, similarity_threshold=cfg.similarity_threshold, similarity_mode=cfg.similarity_mode)
-                terminals = list(terminal_batch.unbind(0))
+                terminals = [terminal_batch[j:j + 1] for j in range(terminal_batch.shape[0])]
             else:
                 terminals = [_terminal(pipe, edited_state, candidates[0], i + 1, source_latent=edited_state.image_latents, intervention_step_count=cfg.intervention_step_count, similarity_threshold=cfg.similarity_threshold, similarity_mode=cfg.similarity_mode)]
             stage_images = [decode(edited_state, x)[0] for x in terminals]; branch_images.append(stage_images)

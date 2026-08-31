@@ -32,8 +32,14 @@ def decode(pipe, state, latents):
 
 @torch.inference_mode()
 def decode_many(pipe, state, latents, batch_size=5):
+    if isinstance(latents, (list, tuple)):
+        if not latents:
+            return []
+        latents = torch.cat(list(latents), dim=0)
+    if not isinstance(latents, torch.Tensor) or latents.ndim != 3:
+        raise TypeError("decode_many expects latents with shape [B, N, C]")
     images = []
-    for start in range(0, len(latents), max(1, int(batch_size))):
+    for start in range(0, latents.shape[0], max(1, int(batch_size))):
         batch = latents[start:start + max(1, int(batch_size))]
         unpacked = pipe._unpack_latents(batch, state.height, state.width, pipe.vae_scale_factor)
         unpacked = unpacked / pipe.vae.config.scaling_factor + pipe.vae.config.shift_factor
@@ -110,7 +116,8 @@ def main():
             source.save(method_dir / "source.png"); pixel_mask.save(method_dir / "edit_mask.png")
             rendered = []
             strength_items = list(values.items())
-            decoded_images = decode_many(pipe, bundle.edited_state, [latent for _, latent in strength_items], args.vae_batch_size)
+            latent_batch = torch.cat([latent for _, latent in strength_items], dim=0)
+            decoded_images = decode_many(pipe, bundle.edited_state, latent_batch, args.vae_batch_size)
             for (strength, latent), image in zip(strength_items, decoded_images):
                 image.save(method_dir / f"strength_{strength:.2f}.png"); rendered.append((image, f"s={strength:.2f}"))
                 all_rows.append({"sample_id": sample_id, "global_sample_index": global_sample_index, "method": method, "strength": strength, "edit_l1": region_l1(source, image, pixel_mask, False), "preserve_l1": region_l1(source, image, pixel_mask, True), "seed": seed, "winner_index": bundle.winner_index, "instruction": instruction})
