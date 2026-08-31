@@ -283,7 +283,8 @@ def generate_coupled_branches(pipe, preservation_state, edited_state, token_mask
     selected_search_edit_mask = None
     selected_search_step = next(iter(critical), None)
     full_edit_online_mask_trace = []
-    mask = token_mask.to(e.device, dtype=torch.bool).reshape(1, -1, 1)
+    # Retained for diagnostics/API compatibility; dynamic velocity masks drive coupling.
+    diagnostic_pilot_mask = token_mask.to(e.device, dtype=torch.bool).reshape(1, -1, 1)
     for i, t in enumerate(edited_state.timesteps):
         a, b = _sigmas(pipe, t, edited_state)
         vp = reference_velocity(p, preservation_state.image_latents, a)
@@ -313,6 +314,7 @@ def generate_coupled_branches(pipe, preservation_state, edited_state, token_mask
         p_residual = torch.zeros_like(p); e_residual = torch.zeros_like(e)
         p_next = p_mean
         if i in critical:
+            branch_generator_device = str(e.device)
             gen = torch.Generator(device=e.device).manual_seed(int(seed + i))
             shared = torch.randn(e.shape, generator=gen, device=e.device, dtype=torch.float32)
             independent = torch.randn((4,) + tuple(e.shape[1:]), generator=gen, device=e.device, dtype=torch.float32)
@@ -398,6 +400,7 @@ def generate_coupled_branches(pipe, preservation_state, edited_state, token_mask
                 "reward_selected_branch": int(winner_index),
                 "deployed_edit_direction": "selected_edit_region_delta_velocity",
                 "seed": int(seed + i),
+                "branch_generator_device": branch_generator_device,
                 "sigma": a,
                 "sigma_next": b,
                 "selected_search_edit_ratio": float(dynamic_edit_mask.float().mean()),
@@ -489,7 +492,7 @@ def rollout_strengths(
                     cached_full_edit_online_mask_trace=cached_full_edit_online_mask_trace,
                 )
             )
-        return merged
+        return {value: merged[value] for value in values}
     if source_latent is None: source_latent = edited_state.image_latents
     if similarity_mode is None: similarity_mode = 'elementwise'
     if selected_search_step is not None and selected_delta_velocity is None:
@@ -651,6 +654,9 @@ def build_bundle(pipe, source, instruction, decode, scorer, *, seed, config=None
         "source_conditioning_tokens": int(edited_state.metadata["source_conditioning_tokens"]),
         "token_mask": mask.cpu().tolist(),
         "mask_scores": scores.cpu().tolist(),
+        "token_mask_role": "diagnostic_pilot_only; dynamic_velocity_mask_controls_search_coupling",
+        "latent_generator_device": str(cfg.generator_device),
+        "branch_generator_device": None if not records else records[0].get("branch_generator_device"),
         "reward_selected": bool(used and candidate_index is None),
         "search_stage_count": len(records),
         "selected_correction_applied_once": bool(selected_delta_velocity is not None and selected_search_step is not None),

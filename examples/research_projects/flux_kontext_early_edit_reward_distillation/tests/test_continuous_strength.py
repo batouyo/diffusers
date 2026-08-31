@@ -1,8 +1,10 @@
 import math
+from types import SimpleNamespace
 
 import torch
 from PIL import Image
 import pytest
+import early_edit_reward_distillation.continuous_strength as continuous_strength_module
 
 from early_edit_reward_distillation.continuous_strength import (
     _critical_indices,
@@ -131,3 +133,24 @@ def test_search_step_is_earliest_valid_and_inside_strength_window():
             state,
             ContinuousStrengthConfig(search_step_indices=(2,)),
         )
+
+def test_rollout_endpoint_and_zero_strength_correction_regression(monkeypatch):
+    state = SimpleNamespace(latents=torch.zeros(1, 2, 1), image_latents=torch.zeros(1, 2, 1), timesteps=[0, 1])
+    winner = SimpleNamespace(terminal=torch.full((1, 2, 1), -2.25))
+    monkeypatch.setattr(continuous_strength_module, "velocity", lambda pipe, state, x, t: torch.full_like(x, 2.0))
+    monkeypatch.setattr(continuous_strength_module, "_sigmas", lambda pipe, t, state: (1.0, 0.5) if t == 0 else (0.5, 0.0))
+    correction = torch.full((1, 2, 1), 0.5)
+    edit_mask = torch.ones(1, 2, dtype=torch.bool)
+    without = rollout_strengths(None, state, winner, [0.0], edited_state=state, preserve_step_count=2, edit_strength_step_count=2, similarity_threshold=2.0)[0.0]
+    with_correction = rollout_strengths(None, state, winner, [0.0], edited_state=state, preserve_step_count=2, edit_strength_step_count=2, similarity_threshold=2.0, selected_delta_velocity=correction, selected_search_edit_mask=edit_mask, selected_search_step=1)[0.0]
+    assert torch.equal(without, with_correction)
+    endpoint = rollout_strengths(None, state, winner, [1.0], edited_state=state, preserve_step_count=2, edit_strength_step_count=2, similarity_threshold=2.0, selected_delta_velocity=correction, selected_search_edit_mask=edit_mask, selected_search_step=1)[1.0]
+    assert torch.equal(endpoint, winner.terminal)
+
+def test_rollout_strength_batch_preserves_input_order(monkeypatch):
+    state = SimpleNamespace(latents=torch.zeros(1, 1, 1), image_latents=torch.zeros(1, 1, 1), timesteps=[0])
+    winner = SimpleNamespace(terminal=torch.zeros(1, 1, 1))
+    monkeypatch.setattr(continuous_strength_module, "velocity", lambda pipe, state, x, t: torch.ones_like(x))
+    monkeypatch.setattr(continuous_strength_module, "_sigmas", lambda pipe, t, state: (1.0, 0.0))
+    result = rollout_strengths(None, state, winner, [0.75, 0.0, 1.0, 0.25], edited_state=state, preserve_step_count=2, edit_strength_step_count=1, strength_batch_size=2, similarity_threshold=2.0)
+    assert list(result) == [0.75, 0.0, 1.0, 0.25]

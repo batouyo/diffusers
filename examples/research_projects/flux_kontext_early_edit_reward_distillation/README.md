@@ -20,13 +20,15 @@ velocity. Editing masks are estimated from normalized early generated-token
 differences; source conditioning tokens are never branched. At configured
 critical transitions, preservation receives shared noise and edited states use
 the same noise outside the edit mask plus independent noise inside it. The
-selected branch residual is cached as `winner_state - deterministic_edit_state`.
+Pilot token masks are diagnostic metadata only. At the single search transition
+(step 1 by default), preservation receives shared noise while the edit region
+explores independently; Reward selects one early branch and only its masked edit-direction velocity correction is deployed.
 
-Strength rollout re-evaluates both model velocities on the current interpolated
-state, then applies `v_preserve + s * (v_edit - v_preserve)` and the residual
-`(1-s) * preservation_residual + s * reward_residual`. Thus strength scans do
-not resample and do not replay velocities cached at other states. Set
-`--critical-step-indices 1,2` to override the fallback critical transitions.
+Strength rollout re-evaluates model velocities on the current state and applies
+the short VeloEdit-style controller: preserve intervention lasts 4 steps and
+edit-strength interpolation lasts 2 steps. The selected correction is added to
+the edit velocity once at the search step and is then absent from later steps.
+There is no state residual replay. Strength scans do not resample or call Reward.
 
 Run a single sample with a reward factory:
 
@@ -43,5 +45,5 @@ For mechanism-only debugging, replace `--reward-factory` with
 `--candidate-index 0`. Such runs are explicitly marked as not Reward-selected.
 SDE noise is injected only during early branch search; strength rollout is
 deterministic and does not resample or call Reward again. Intermediate values
-use paired cached velocities as an engineering approximation; `s=0` and `s=1`
-return the cached preservation and selected full-edit endpoints exactly.
+are recomputed from the initial latent like every other strength. Endpoint
+parity is checked by regression tests rather than enforced through caching.
