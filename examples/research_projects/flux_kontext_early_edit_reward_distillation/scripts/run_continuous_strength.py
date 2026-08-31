@@ -104,7 +104,7 @@ def main() -> None:
         decode_fn = lambda state, latents: decode(pipe, state, latents)
         bundle = build_bundle(pipe, source, instruction, decode_fn, scorer, seed=args.seed + record_index * 100, config=config, candidate_index=args.candidate_index)
         online_mask_trace = []
-        strengths = rollout_strengths(pipe, bundle.preservation, bundle.winner, config.strengths, preservation_state=bundle.preservation_state, edited_state=bundle.edited_state, selected_delta_velocity=bundle.selected_delta_velocity, selected_search_edit_mask=bundle.selected_search_edit_mask, selected_search_step=bundle.selected_search_step, preserve_step_count=config.preserve_step_count, edit_strength_step_count=config.edit_strength_step_count, similarity_threshold=config.similarity_threshold, similarity_mode=config.similarity_mode, online_mask_trace=online_mask_trace)
+        strengths = rollout_strengths(pipe, bundle.preservation, bundle.winner, config.strengths, preservation_state=bundle.preservation_state, edited_state=bundle.edited_state, selected_delta_velocity=bundle.selected_delta_velocity, selected_search_edit_mask=bundle.selected_search_edit_mask, selected_search_step=bundle.selected_search_step, preserve_step_count=config.preserve_step_count, edit_strength_step_count=config.edit_strength_step_count, similarity_threshold=config.similarity_threshold, similarity_mode=config.similarity_mode, online_mask_trace=online_mask_trace, cached_full_edit_online_mask_trace=bundle.metadata.get("full_edit_online_mask_trace"))
         bundle.metadata["online_mask_trace"] = online_mask_trace
         source.save(sample_output / "source.png")
         pixel_mask.save(sample_output / "edit_mask.png")

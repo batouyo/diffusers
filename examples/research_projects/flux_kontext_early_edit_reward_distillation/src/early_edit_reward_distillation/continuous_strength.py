@@ -10,7 +10,7 @@ from __future__ import annotations
 import importlib
 import json
 import math
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable, Protocol, Sequence
 
@@ -454,6 +454,7 @@ def rollout_strengths(
     similarity_mode=None,
     strength_batch_size=None,
     online_mask_trace=None,
+    cached_full_edit_online_mask_trace=None,
 ):
     if edited_state is None or winner is None: raise ValueError('rollout requires edited_state and winner')
     if strength_batch_size is not None and int(strength_batch_size) < 1:
@@ -479,6 +480,7 @@ def rollout_strengths(
                     similarity_threshold=similarity_threshold,
                     similarity_mode=similarity_mode,
                     online_mask_trace=online_mask_trace,
+                    cached_full_edit_online_mask_trace=cached_full_edit_online_mask_trace,
                 )
             )
         return merged
@@ -496,9 +498,23 @@ def rollout_strengths(
         if int(selected_search_step) >= int(preserve_step_count):
             raise ValueError("selected search step must be inside the preserve window")
     values = [float(v) for v in strengths]
+    reuse_winner_for_one = any(value == 1.0 for value in values)
+    model_values = [value for value in values if value != 1.0]
     output = {}
-    x = edited_state.latents.repeat(len(values), 1, 1)
-    s_tensor = torch.tensor(values, device=x.device, dtype=torch.float32).view(-1, 1, 1)
+    if reuse_winner_for_one:
+        output[1.0] = winner.terminal.clone()
+        if online_mask_trace is not None:
+            for item in (cached_full_edit_online_mask_trace or []):
+                online_mask_trace.append({
+                    "strength": 1.0,
+                    "step_index": int(item["step_index"]),
+                    "online_edit_ratio": float(item["online_edit_ratio"]),
+                    "online_preserve_ratio": float(item["online_preserve_ratio"]),
+                })
+    if not model_values:
+        return output
+    x = edited_state.latents.repeat(len(model_values), 1, 1)
+    s_tensor = torch.tensor(model_values, device=x.device, dtype=torch.float32).view(-1, 1, 1)
     for i, t in enumerate(edited_state.timesteps):
         v_edit = velocity(pipe, edited_state, x, t)
         sigma, sigma_next = _sigmas(pipe, t, edited_state)
@@ -524,7 +540,7 @@ def rollout_strengths(
             edit_strength_active=i < int(edit_strength_step_count),
         )
         if online_mask_trace is not None and i < int(preserve_step_count):
-            for index, value in enumerate(values):
+            for index, value in enumerate(model_values):
                 online_mask_trace.append(
                     {
                         "strength": float(value),
@@ -534,7 +550,7 @@ def rollout_strengths(
                     }
                 )
         x = _step(x, v_out, sigma, sigma_next)
-    for index, value in enumerate(values):
+    for index, value in enumerate(model_values):
         output[value] = x[index:index + 1].clone()
     return output
 
@@ -555,22 +571,32 @@ def build_bundle(pipe, source, instruction, decode, scorer, *, seed, config=None
         generator_device=cfg.generator_device,
         device=pipe._execution_device,
     )
-    preservation_state = prepare_state(
-        pipe,
-        source,
-        cfg.neutral_prompt,
-        seed,
-        height=cfg.height,
-        width=cfg.width,
-        steps=cfg.steps,
-        guidance_scale=cfg.guidance_scale,
-        first_step_align_steps=cfg.first_step_align_steps,
-        generator_device=cfg.generator_device,
-        device=pipe._execution_device,
-    )
+    if cfg.enable_search:
+        preservation_state = prepare_state(
+            pipe, source, cfg.neutral_prompt, seed,
+            height=cfg.height, width=cfg.width, steps=cfg.steps,
+            guidance_scale=cfg.guidance_scale,
+            first_step_align_steps=cfg.first_step_align_steps,
+            generator_device=cfg.generator_device,
+            device=pipe._execution_device,
+        )
+    else:
+        preservation_state = replace(
+            edited_state,
+            latents=edited_state.latents.clone(),
+            metadata={**edited_state.metadata, "prompt": cfg.neutral_prompt, "role": "preservation_reference"},
+        )
     preservation_state.latents = edited_state.latents.clone()
-    pilot_p, pilot_e = deterministic_trace(pipe, preservation_state), deterministic_trace(pipe, edited_state)
-    critical = _critical_indices(edited_state, cfg); mask, scores = estimate_edit_token_mask(pilot_p, pilot_e, critical, quantile=cfg.mask_quantile, min_ratio=cfg.min_edit_ratio, max_ratio=cfg.max_edit_ratio)
+    critical = _critical_indices(edited_state, cfg)
+    if cfg.enable_search:
+        pilot_p, pilot_e = deterministic_trace(pipe, preservation_state), deterministic_trace(pipe, edited_state)
+        mask, scores = estimate_edit_token_mask(
+            pilot_p, pilot_e, critical,
+            quantile=cfg.mask_quantile, min_ratio=cfg.min_edit_ratio, max_ratio=cfg.max_edit_ratio,
+        )
+    else:
+        mask = torch.zeros(edited_state.latents.shape[1], device=edited_state.latents.device, dtype=torch.bool)
+        scores = torch.zeros_like(mask, dtype=torch.float32)
     (
         preservation,
         winner,
@@ -650,7 +676,7 @@ def build_bundle(pipe, source, instruction, decode, scorer, *, seed, config=None
     ]
     return TrajectoryBundle(
         preservation,
-        pilot_e,
+        winner if not cfg.enable_search else pilot_e,
         winner,
         mask,
         scores,
