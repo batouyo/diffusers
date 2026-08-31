@@ -1,0 +1,32 @@
+{
+  "commit": "b7f0d52f5",
+  "sample_id": "pie_8_change_background_80_814000000007",
+  "seed": 20260830,
+  "config": {
+    "steps": 30,
+    "guidance": 2.5,
+    "preserve_step_count": 4,
+    "edit_strength_step_count": 2,
+    "search_step": 1,
+    "similarity_threshold": 0.8,
+    "generator_device": "cpu",
+    "alpha": 0.05,
+    "K": 4
+  },
+  "search": {
+    "stage_count": 1,
+    "branch_step_index": 1,
+    "selected_search_step": 1
+  },
+  "s0_correction_parity": {
+    "max_abs_error": 0.0,
+    "relative_l2": 0.0
+  },
+  "s1_winner_parity": {
+    "max_abs_error": 0.0,
+    "relative_l2": 0.0
+  },
+  "state_residual_strength_replay": false,
+  "all_tensors_finite": true,
+  "passed": true
+}
