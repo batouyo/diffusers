@@ -375,11 +375,13 @@ def generate_coupled_branches(pipe, preservation_state, edited_state, token_mask
             ) / (float(b) - float(a))
             if not torch.isfinite(selected_delta_velocity).all():
                 raise RuntimeError("selected delta velocity is non-finite")
-            e_next = (
-                e_mean.float()
-                + selected_delta_velocity.float() * (float(b) - float(a))
-            ).to(e.dtype)
-            reconstruction = _step(e, ve + selected_delta_velocity.to(ve.dtype), a, b)
+            delta = selected_delta_velocity.to(device=e.device, dtype=ve.dtype)
+            mask = selected_search_edit_mask.to(device=e.device, dtype=torch.bool)
+            while mask.ndim < ve.ndim:
+                mask = mask.unsqueeze(-1)
+            deployed_velocity = ve + delta * mask.to(ve.dtype)
+            e_next = _step(e, deployed_velocity, a, b)
+            reconstruction = e_next
             reconstruction_target = e_mean + selected_residual * selected_search_edit_mask.float()
             reconstruction_error = (reconstruction.float() - reconstruction_target.float()).abs()
             p_residual = p_next - p_mean
@@ -414,6 +416,8 @@ def generate_coupled_branches(pipe, preservation_state, edited_state, token_mask
             })
         else:
             p_next, e_next = p_mean, e_mean
+        if i in critical:
+            ve = deployed_velocity
         pvs.append(vp.clone()); evs.append(ve.clone()); ts.append(float(t)); ss.append((a, b)); p_residuals.append(p_residual.clone()); e_residuals.append(e_residual.clone())
         p, e = p_next, e_next; p_states.append(p.clone()); e_states.append(e.clone())
     preservation = TrajectoryTrace(str(preservation_state.metadata.get("prompt", "")), p_states, pvs, ts, ss, p.clone(), p_residuals)
