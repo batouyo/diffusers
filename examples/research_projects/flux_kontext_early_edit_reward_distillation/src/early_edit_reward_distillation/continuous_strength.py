@@ -118,6 +118,20 @@ class TrajectoryBundle:
     edited_state: Any = None
 
 
+@dataclass
+class PreparedSampleContext:
+    edited_state: KontextState
+    source: Image.Image
+    instruction: str
+    seed: int
+
+
+@torch.inference_mode()
+def prepare_sample_context(pipe, source, instruction, *, seed, config):
+    state = prepare_state(pipe, source, instruction, seed, height=config.height, width=config.width, steps=config.steps, guidance_scale=config.guidance_scale, first_step_align_steps=config.first_step_align_steps, device=pipe._execution_device)
+    return PreparedSampleContext(state, source, instruction, int(seed))
+
+
 def _critical_indices(state_or_pipe: Any, cfg: ContinuousStrengthConfig) -> list[int]:
     """Select stochastic transitions from the prepared state's effective schedule."""
     values = None
@@ -193,7 +207,7 @@ def select_winner(source, candidates, instruction, scorer, *, candidate_index=No
         return int(candidate_index), [float("nan")] * 4, False
     if scorer is None:
         raise RewardUnavailable("a RewardScorer or explicit candidate_index is required")
-    rewards = [float(scorer.score(source, x, instruction)) for x in candidates]
+    rewards = [float(x) for x in (scorer.score_many(source, candidates, instruction) if hasattr(scorer, "score_many") else [scorer.score(source, x, instruction) for x in candidates])]
     if not all(math.isfinite(x) for x in rewards):
         raise ValueError("Reward returned a non-finite value")
     return max(range(4), key=lambda i: (rewards[i], -i)), rewards, True
@@ -213,8 +227,26 @@ def _terminal(pipe, state, x, start, *, source_latent=None, intervention_step_co
 
 
 @torch.inference_mode()
+def _terminal_batch(pipe, state, x, start, *, source_latent=None, intervention_step_count=0, similarity_threshold=0.8, similarity_mode="elementwise"):
+    """Roll out candidate batch with one transformer call per timestep."""
+    source_latent = state.image_latents if source_latent is None else source_latent
+    for i in range(start, len(state.timesteps)):
+        t = state.timesteps[i]
+        v_edit = velocity(pipe, state, x, t)
+        a, b = _sigmas(pipe, t, state)
+        if i < int(intervention_step_count):
+            v_ref = reference_velocity(x, source_latent, a)
+            similarity = velocity_similarity(v_edit, v_ref, similarity_mode)
+            v, _, _ = regional_velocity(v_edit, v_ref, 1.0, similarity, similarity_threshold)
+        else:
+            v = v_edit
+        x = _step(x, v, a, b)
+    return x
+
+
+@torch.inference_mode()
 def generate_coupled_branches(pipe, preservation_state, edited_state, token_mask, source, instruction, decode, scorer, *, seed, cfg, candidate_index=None):
-    critical = set(_critical_indices(pipe, cfg)) if cfg.enable_search else set(); p, e = preservation_state.latents, edited_state.latents
+    critical = set(_critical_indices(edited_state, cfg)) if cfg.enable_search else set(); p, e = preservation_state.latents, edited_state.latents
     p_states, e_states = [p.clone()], [e.clone()]; pvs, evs, ts, ss, p_residuals, e_residuals = [], [], [], [], [], []
     records, branch_images = [], []; final_rewards = []; winner_index = 0; used_reward = False
     mask = token_mask.to(e.device, dtype=torch.bool).reshape(1, -1, 1)
@@ -251,10 +283,17 @@ def generate_coupled_branches(pipe, preservation_state, edited_state, token_mask
                 delta_residual = raw_residual - p_residual.float()
                 candidate = (e_mean.float() + delta_residual).to(e.dtype)
                 candidates.append(candidate)
-                terminals.append(_terminal(pipe, edited_state, candidate, i + 1, source_latent=edited_state.image_latents, intervention_step_count=cfg.intervention_step_count, similarity_threshold=cfg.similarity_threshold, similarity_mode=cfg.similarity_mode))
                 diagnostics.append({**diag, "candidate_index": j, "candidate_seed": int(seed + i), "raw_state_hash": tensor_hash(raw_candidate), "corrected_state_hash": tensor_hash(candidate), "raw_residual_norm": float(raw_residual.norm().item()), "delta_residual_norm": float(delta_residual.norm().item()), "finite": bool(torch.isfinite(candidate).all().item())})
+            if cfg.enable_reward:
+                terminal_batch = _terminal_batch(pipe, edited_state, torch.cat(candidates, dim=0), i + 1, source_latent=edited_state.image_latents, intervention_step_count=cfg.intervention_step_count, similarity_threshold=cfg.similarity_threshold, similarity_mode=cfg.similarity_mode)
+                terminals = list(terminal_batch.unbind(0))
+            else:
+                terminals = [_terminal(pipe, edited_state, candidates[0], i + 1, source_latent=edited_state.image_latents, intervention_step_count=cfg.intervention_step_count, similarity_threshold=cfg.similarity_threshold, similarity_mode=cfg.similarity_mode)]
             stage_images = [decode(edited_state, x)[0] for x in terminals]; branch_images.append(stage_images)
-            winner_index, rewards, used = select_winner(source, stage_images, instruction, scorer if cfg.enable_reward else None, candidate_index=candidate_index if not cfg.enable_reward else None)
+            if cfg.enable_reward:
+                winner_index, rewards, used = select_winner(source, stage_images, instruction, scorer, candidate_index=None)
+            else:
+                winner_index, rewards, used = 0, [float("nan")] * 4, False
             final_rewards, used_reward = rewards, used_reward or used
             e_next = candidates[winner_index]
             p_residual = p_next - p_mean
@@ -307,14 +346,16 @@ def rollout_strengths(pipe, preservation, winner, strengths, *, preservation_sta
 
 
 @torch.inference_mode()
-def build_bundle(pipe, source, instruction, decode, scorer, *, seed, config=None, candidate_index=None):
+def build_bundle(pipe, source, instruction, decode, scorer, *, seed, config=None, candidate_index=None, prepared_context=None):
     cfg = config or ContinuousStrengthConfig()
-    edited_state = prepare_state(pipe, source, instruction, seed, height=cfg.height, width=cfg.width, steps=cfg.steps, guidance_scale=cfg.guidance_scale, first_step_align_steps=cfg.first_step_align_steps, device=pipe._execution_device)
+    edited_state = prepared_context.edited_state if prepared_context is not None else prepare_state(pipe, source, instruction, seed, height=cfg.height, width=cfg.width, steps=cfg.steps, guidance_scale=cfg.guidance_scale, first_step_align_steps=cfg.first_step_align_steps, device=pipe._execution_device)
     preservation_state = prepare_state(pipe, source, cfg.neutral_prompt, seed, height=cfg.height, width=cfg.width, steps=cfg.steps, guidance_scale=cfg.guidance_scale, first_step_align_steps=cfg.first_step_align_steps, device=pipe._execution_device)
     preservation_state.latents = edited_state.latents.clone()
     pilot_p, pilot_e = deterministic_trace(pipe, preservation_state), deterministic_trace(pipe, edited_state)
     critical = _critical_indices(edited_state, cfg); mask, scores = estimate_edit_token_mask(pilot_p, pilot_e, critical, quantile=cfg.mask_quantile, min_ratio=cfg.min_edit_ratio, max_ratio=cfg.max_edit_ratio)
     preservation, winner, records, index, rewards, used, images = generate_coupled_branches(pipe, preservation_state, edited_state, mask, source, instruction, decode, scorer, seed=seed + 10000, cfg=cfg, candidate_index=candidate_index)
+    actual_search = sorted({int(item["branch_step_index"]) for item in records})
+    if cfg.enable_search and actual_search != critical: raise RuntimeError(f"search step mismatch: actual={actual_search}, metadata={critical}")
     metadata = {"seed": int(seed), "instruction": instruction, "neutral_prompt": cfg.neutral_prompt, "config": asdict(cfg), "critical_indices": critical, "search_step_indices": critical if cfg.enable_search else [], "intervention_step_count": cfg.intervention_step_count, "intervention_steps_applied": list(range(min(cfg.intervention_step_count, len(edited_state.timesteps)))), "generated_tokens": int(edited_state.metadata["generated_tokens"]), "source_conditioning_tokens": int(edited_state.metadata["source_conditioning_tokens"]), "token_mask": mask.cpu().tolist(), "mask_scores": scores.cpu().tolist(), "reward_selected": bool(used and candidate_index is None), "coupled_sde": "preservation/edit share noise outside edit mask; edited candidates use independent noise inside edit mask", "first_step_alignment": edited_state.metadata.get("first_step_alignment"), "preservation": preservation.metadata(), "winner": winner.metadata()}
     metadata["schedule_trace"] = [{"step_index": int(i), "model_timestep": float(t), "sigma": float(_sigmas(pipe, t, edited_state)[0]), "sigma_next": float(_sigmas(pipe, t, edited_state)[1]), "intervention": bool(i < int(cfg.intervention_step_count))} for i, t in enumerate(edited_state.timesteps)]
     metadata["dynamic_mask_trace"] = []
@@ -352,7 +393,7 @@ def reference_velocity(z_t, z_source, sigma, eps=1e-8):
 
 def velocity_similarity(v_edit, v_ref, mode='elementwise', eps=1e-8):
     if mode == 'elementwise': return (v_ref.float().abs() + eps) / (v_ref.float().abs() + eps + (v_edit.float() - v_ref.float()).abs())
-    if mode == 'cosine': return (F.cosine_similarity(v_edit.float(), v_ref.float(), dim=-1, eps=eps) + 1.0) * 0.5
+    if mode == 'cosine': return ((F.cosine_similarity(v_edit.float(), v_ref.float(), dim=-1, eps=eps) + 1.0) * 0.5).unsqueeze(-1)
     raise ValueError('similarity mode must be elementwise or cosine')
 
 def regional_velocity(v_edit, v_ref, strength, similarity, threshold=0.8):

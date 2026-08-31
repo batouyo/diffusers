@@ -11,7 +11,7 @@ from diffusers import FluxKontextPipeline
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
-from early_edit_reward_distillation.continuous_strength import ContinuousStrengthConfig, build_bundle, rollout_strengths, save_bundle_metadata, save_bundle_tensors
+from early_edit_reward_distillation.continuous_strength import ContinuousStrengthConfig, build_bundle, prepare_sample_context, rollout_strengths, save_bundle_metadata, save_bundle_tensors
 from early_edit_reward_distillation.metrics import region_l1
 from early_edit_reward_distillation.rewards import build_official_editscore
 
@@ -39,6 +39,7 @@ def decode_many(pipe, state, latents, batch_size=5):
         unpacked = unpacked / pipe.vae.config.scaling_factor + pipe.vae.config.shift_factor
         decoded = pipe.vae.decode(unpacked.to(pipe.vae.dtype), return_dict=False)[0]
         images.extend(pipe.image_processor.postprocess(decoded, output_type="pil"))
+    return images
 
 def sheet(images, path):
     cell = 192
@@ -75,7 +76,9 @@ def main():
     parser.add_argument("--sample-end", type=int, default=None)
     parser.add_argument("--methods", default=None, help="comma-separated arm names; unset runs all arms")
     args = parser.parse_args()
-    records = load_records(args.manifest, args.count)[args.sample_start:args.sample_end]
+    all_records = load_records(args.manifest, args.count)
+    indexed_records = list(enumerate(all_records))
+    records = indexed_records[args.sample_start:args.sample_end]
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     pipe = FluxKontextPipeline.from_pretrained(args.model, torch_dtype=torch.bfloat16, local_files_only=True).to(device)
     pipe.set_progress_bar_config(disable=True)
@@ -88,23 +91,29 @@ def main():
     strengths = tuple(float(x) for x in np.linspace(0.0, 1.0, 10))
     out = Path(args.output); out.mkdir(parents=True, exist_ok=True); timings = []
     all_rows = []
-    for row_index, record in enumerate(records):
+    for global_sample_index, record in records:
         sample_id = str(record["sample_id"]); sample_dir = Path(args.samples_root) / sample_id
         source = Image.open(sample_dir / "source.png").convert("RGB")
         pixel_mask = Image.open(sample_dir / "edit_mask.png").convert("L")
-        instruction = str(record["instruction"]); seed = int(args.seed + row_index * 100)
+        instruction = str(record["instruction"]); seed = int(args.seed + global_sample_index * 100)
+        prepared_context = None
         for method in selected_methods:
             method_t0 = time.perf_counter()
             switches = ARMS[method]
             cfg = ContinuousStrengthConfig(steps=30, guidance_scale=2.5, alpha=args.alpha, intervention_step_count=4, search_step_indices=search_indices, strengths=strengths, **switches)
-            bundle = build_bundle(pipe, source, instruction, lambda state, x: [decode(pipe, state, x)], scorer, seed=seed, config=cfg, candidate_index=0 if not switches["enable_reward"] else None)
+            if prepared_context is None:
+                prepared_context = prepare_sample_context(pipe, source, instruction, seed=seed, config=cfg)
+            bundle = build_bundle(pipe, source, instruction, lambda state, x: [decode(pipe, state, x)], scorer, seed=seed, config=cfg, candidate_index=0 if not switches["enable_reward"] else None, prepared_context=prepared_context)
+            bundle.metadata["global_sample_index"] = int(global_sample_index)
             values = rollout_strengths(pipe, bundle.preservation, bundle.winner, strengths, preservation_state=bundle.preservation_state, edited_state=bundle.edited_state, intervention_step_count=cfg.intervention_step_count, search_step_indices=bundle.metadata.get("search_step_indices"), similarity_threshold=cfg.similarity_threshold, similarity_mode=cfg.similarity_mode, strength_batch_size=args.strength_batch_size)
             method_dir = out / method / sample_id; method_dir.mkdir(parents=True, exist_ok=True)
             source.save(method_dir / "source.png"); pixel_mask.save(method_dir / "edit_mask.png")
             rendered = []
-            for strength, latent in values.items():
-                image = decode(pipe, bundle.edited_state, latent); image.save(method_dir / f"strength_{strength:.2f}.png"); rendered.append((image, f"s={strength:.2f}"))
-                all_rows.append({"sample_id": sample_id, "method": method, "strength": strength, "edit_l1": region_l1(source, image, pixel_mask, False), "preserve_l1": region_l1(source, image, pixel_mask, True), "seed": seed, "winner_index": bundle.winner_index, "instruction": instruction})
+            strength_items = list(values.items())
+            decoded_images = decode_many(pipe, bundle.edited_state, [latent for _, latent in strength_items], args.vae_batch_size)
+            for (strength, latent), image in zip(strength_items, decoded_images):
+                image.save(method_dir / f"strength_{strength:.2f}.png"); rendered.append((image, f"s={strength:.2f}"))
+                all_rows.append({"sample_id": sample_id, "global_sample_index": global_sample_index, "method": method, "strength": strength, "edit_l1": region_l1(source, image, pixel_mask, False), "preserve_l1": region_l1(source, image, pixel_mask, True), "seed": seed, "winner_index": bundle.winner_index, "instruction": instruction})
             sheet(rendered, method_dir / "contact_sheet.png")
             save_bundle_metadata(bundle, method_dir / "trajectory.json"); (save_bundle_tensors(bundle, method_dir / "trajectory.pt") if args.save_debug_tensors else None); timings.append({"sample_id": sample_id, "method": method, "total_seconds": time.perf_counter() - method_t0})
             (method_dir / "branch_scores.json").write_text(json.dumps(bundle.branch_records, ensure_ascii=False, indent=2, default=str) + "\n", encoding="utf-8")
