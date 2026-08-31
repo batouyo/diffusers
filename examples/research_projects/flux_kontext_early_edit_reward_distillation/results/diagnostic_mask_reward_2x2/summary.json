@@ -1,0 +1,60 @@
+{
+  "sample_id": "pie_8_change_background_80_814000000007",
+  "instruction": "a painting of [moon] rising above the sea level",
+  "seed": 20260830,
+  "lambda": 5.0,
+  "results": [
+    {
+      "mask": "dynamic",
+      "reward": "original",
+      "winner_index": 3,
+      "rewards": [
+        6.387487769068525,
+        6.118823416311343,
+        6.572670690061994,
+        7.2
+      ],
+      "seconds": 123.0731035550125,
+      "reward_selected": true
+    },
+    {
+      "mask": "dynamic",
+      "reward": "preservation_aware",
+      "winner_index": 3,
+      "rewards": [
+        5.1041221320045445,
+        4.834190137464602,
+        5.290339193584867,
+        5.915140372514725
+      ],
+      "seconds": 121.14853542100172,
+      "reward_selected": true
+    },
+    {
+      "mask": "gt",
+      "reward": "original",
+      "winner_index": 0,
+      "rewards": [
+        5.542562584220407,
+        5.542562584220407,
+        5.542562584220407,
+        5.542562584220407
+      ],
+      "seconds": 116.65586919593625,
+      "reward_selected": true
+    },
+    {
+      "mask": "gt",
+      "reward": "preservation_aware",
+      "winner_index": 1,
+      "rewards": [
+        5.464796776710985,
+        5.465051772831915,
+        5.464687313712178,
+        5.348218920305978
+      ],
+      "seconds": 120.19601052103098,
+      "reward_selected": true
+    }
+  ]
+}
