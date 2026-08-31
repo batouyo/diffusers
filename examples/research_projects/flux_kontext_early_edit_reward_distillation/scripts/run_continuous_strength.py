@@ -74,7 +74,10 @@ def main() -> None:
     parser.add_argument("--coupling-strength", type=float, default=0.0)
     parser.add_argument("--critical-step-indices", default=None, help="comma-separated scheduler transition indices; unset uses first non-zero transitions")
     parser.add_argument("--search-step-indices", default=None, help="comma-separated early SDE search transition indices")
-    parser.add_argument("--intervention-step-count", type=int, default=4)
+    parser.add_argument("--preserve-step-count", type=int, default=4)
+    parser.add_argument("--edit-strength-step-count", type=int, default=2)
+    parser.add_argument("--similarity-threshold", type=float, default=0.8)
+    parser.add_argument("--generator-device", default="cpu")
     parser.add_argument("--strengths", default="0,0.25,0.5,0.75,1")
     parser.add_argument("--disable-search", action="store_true")
     parser.add_argument("--disable-reward", action="store_true")
@@ -88,7 +91,7 @@ def main() -> None:
     pipe.set_progress_bar_config(disable=True)
     critical_indices = None if args.critical_step_indices is None else tuple(int(x) for x in args.critical_step_indices.split(",") if x.strip())
     search_indices = None if args.search_step_indices is None else tuple(int(x) for x in args.search_step_indices.split(",") if x.strip())
-    config = ContinuousStrengthConfig(height=args.height, width=args.width, steps=args.steps, guidance_scale=args.guidance, alpha=args.alpha, coupling_strength=args.coupling_strength, critical_step_indices=critical_indices, search_step_indices=search_indices, intervention_step_count=args.intervention_step_count, strengths=tuple(float(x) for x in args.strengths.split(",")), enable_search=not args.disable_search, enable_reward=not args.disable_reward, enable_coupling=not args.disable_coupling)
+    config = ContinuousStrengthConfig(height=args.height, width=args.width, steps=args.steps, guidance_scale=args.guidance, alpha=args.alpha, coupling_strength=args.coupling_strength, critical_step_indices=critical_indices, search_step_indices=search_indices, preserve_step_count=args.preserve_step_count, edit_strength_step_count=args.edit_strength_step_count, similarity_threshold=args.similarity_threshold, generator_device=args.generator_device, strengths=tuple(float(x) for x in args.strengths.split(",")), enable_search=not args.disable_search, enable_reward=not args.disable_reward, enable_coupling=not args.disable_coupling)
     output = Path(args.output); output.mkdir(parents=True, exist_ok=True)
     rows = []
     for record_index, (sample_id, sample_dir, instruction) in enumerate(load_records(args)):
@@ -100,7 +103,9 @@ def main() -> None:
         sample_output.mkdir(parents=True, exist_ok=True)
         decode_fn = lambda state, latents: decode(pipe, state, latents)
         bundle = build_bundle(pipe, source, instruction, decode_fn, scorer, seed=args.seed + record_index * 100, config=config, candidate_index=args.candidate_index)
-        strengths = rollout_strengths(pipe, bundle.preservation, bundle.winner, config.strengths, preservation_state=bundle.preservation_state, edited_state=bundle.edited_state, intervention_step_count=config.intervention_step_count, search_step_indices=bundle.metadata.get("search_step_indices"), similarity_threshold=config.similarity_threshold, similarity_mode=config.similarity_mode)
+        online_mask_trace = []
+        strengths = rollout_strengths(pipe, bundle.preservation, bundle.winner, config.strengths, preservation_state=bundle.preservation_state, edited_state=bundle.edited_state, selected_delta_velocity=bundle.selected_delta_velocity, selected_search_edit_mask=bundle.selected_search_edit_mask, selected_search_step=bundle.selected_search_step, preserve_step_count=config.preserve_step_count, edit_strength_step_count=config.edit_strength_step_count, similarity_threshold=config.similarity_threshold, similarity_mode=config.similarity_mode, online_mask_trace=online_mask_trace)
+        bundle.metadata["online_mask_trace"] = online_mask_trace
         source.save(sample_output / "source.png")
         pixel_mask.save(sample_output / "edit_mask.png")
         mask = Image.fromarray((bundle.token_mask.cpu().numpy().astype(np.uint8) * 255).reshape(1, -1), mode="L")

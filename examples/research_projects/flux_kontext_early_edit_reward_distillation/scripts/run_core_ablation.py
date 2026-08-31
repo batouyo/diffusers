@@ -72,6 +72,10 @@ def main():
     parser.add_argument("--seed", type=int, default=20260830)
     parser.add_argument("--alpha", type=float, default=0.05)
     parser.add_argument("--search-step-indices", default=None)
+    parser.add_argument("--preserve-step-count", type=int, default=4)
+    parser.add_argument("--edit-strength-step-count", type=int, default=2)
+    parser.add_argument("--similarity-threshold", type=float, default=0.8)
+    parser.add_argument("--generator-device", default="cpu")
     parser.add_argument("--editscore-model", default="/data15/hyp/weight/Qwen3-VL-4B-Instruct")
     parser.add_argument("--editscore-lora", default="/data15/hyp/weight/EditScore-Qwen3-VL-4B-Instruct")
     parser.add_argument("--strength-batch-size", type=int, default=10)
@@ -106,12 +110,14 @@ def main():
         for method in selected_methods:
             method_t0 = time.perf_counter()
             switches = ARMS[method]
-            cfg = ContinuousStrengthConfig(steps=30, guidance_scale=2.5, alpha=args.alpha, intervention_step_count=4, search_step_indices=search_indices, strengths=strengths, **switches)
+            cfg = ContinuousStrengthConfig(steps=30, guidance_scale=2.5, alpha=args.alpha, preserve_step_count=args.preserve_step_count, edit_strength_step_count=args.edit_strength_step_count, similarity_threshold=args.similarity_threshold, generator_device=args.generator_device, search_step_indices=search_indices, strengths=strengths, **switches)
             if prepared_context is None:
                 prepared_context = prepare_sample_context(pipe, source, instruction, seed=seed, config=cfg)
             bundle = build_bundle(pipe, source, instruction, lambda state, x: [decode(pipe, state, x)], scorer, seed=seed, config=cfg, candidate_index=0 if not switches["enable_reward"] else None, prepared_context=prepared_context)
             bundle.metadata["global_sample_index"] = int(global_sample_index)
-            values = rollout_strengths(pipe, bundle.preservation, bundle.winner, strengths, preservation_state=bundle.preservation_state, edited_state=bundle.edited_state, intervention_step_count=cfg.intervention_step_count, search_step_indices=bundle.metadata.get("search_step_indices"), similarity_threshold=cfg.similarity_threshold, similarity_mode=cfg.similarity_mode, strength_batch_size=args.strength_batch_size)
+            online_mask_trace = []
+            values = rollout_strengths(pipe, bundle.preservation, bundle.winner, strengths, preservation_state=bundle.preservation_state, edited_state=bundle.edited_state, selected_delta_velocity=bundle.selected_delta_velocity, selected_search_edit_mask=bundle.selected_search_edit_mask, selected_search_step=bundle.selected_search_step, preserve_step_count=cfg.preserve_step_count, edit_strength_step_count=cfg.edit_strength_step_count, similarity_threshold=cfg.similarity_threshold, similarity_mode=cfg.similarity_mode, strength_batch_size=args.strength_batch_size, online_mask_trace=online_mask_trace)
+            bundle.metadata["online_mask_trace"] = online_mask_trace
             method_dir = out / method / sample_id; method_dir.mkdir(parents=True, exist_ok=True)
             source.save(method_dir / "source.png"); pixel_mask.save(method_dir / "edit_mask.png")
             rendered = []
@@ -129,7 +135,7 @@ def main():
                 for candidate, image in enumerate(images): image.save(stage_dir / f"branch_{candidate}.png")
     with (out / "paired_results.csv").open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=list(all_rows[0])); writer.writeheader(); writer.writerows(all_rows)
-    (out / "config.json").write_text(json.dumps({"arms": ARMS, "seed": args.seed, "strengths": list(strengths), "search_step_indices": search_indices, "intervention_step_count": 4}, indent=2) + "\n", encoding="utf-8")
+    (out / "config.json").write_text(json.dumps({"arms": ARMS, "seed": args.seed, "strengths": list(strengths), "search_step_indices": search_indices, "preserve_step_count": args.preserve_step_count, "edit_strength_step_count": args.edit_strength_step_count, "similarity_threshold": args.similarity_threshold, "generator_device": args.generator_device}, indent=2) + "\n", encoding="utf-8")
     Path(out / "timing.json").write_text(json.dumps(timings, indent=2) + "\n")
     print(json.dumps({"output": str(out), "samples": len(records), "rows": len(all_rows), "timing": timings}, indent=2))
 

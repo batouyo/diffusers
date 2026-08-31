@@ -85,6 +85,7 @@ def prepare_state(
     steps: int = 28,
     guidance_scale: float = 3.5,
     first_step_align_steps: int = 4,
+    generator_device: torch.device | str = "cpu",
     device: torch.device | str = "cuda",
 ) -> KontextState:
     device = torch.device(device)
@@ -98,7 +99,7 @@ def prepare_state(
         prompt=instruction, device=device, num_images_per_prompt=1, max_sequence_length=512
     )
     channels = pipe.transformer.config.in_channels // 4
-    generator = torch.Generator(device=device).manual_seed(int(seed))
+    generator = torch.Generator(device=torch.device(generator_device)).manual_seed(int(seed))
     latents, image_latents, latent_ids, image_ids = pipe.prepare_latents(
         source_tensor, 1, channels, height, width, prompt_embeds.dtype, device, generator, None
     )
