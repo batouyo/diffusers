@@ -1,0 +1,4 @@
+sample_id,strength,reward_selected,winner_index,preserve_l1,edit_l1,instruction
+pie_8_change_background_80_814000000007,0.0,False,0,0.015270927920937538,0.011578467674553394,a painting of [moon] rising above the sea level
+pie_8_change_background_80_814000000007,0.5,False,0,0.11782999336719513,0.11218388378620148,a painting of [moon] rising above the sea level
+pie_8_change_background_80_814000000007,1.0,False,0,0.2568535804748535,0.33536678552627563,a painting of [moon] rising above the sea level
