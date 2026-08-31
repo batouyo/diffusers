@@ -455,6 +455,7 @@ def rollout_strengths(
     strength_batch_size=None,
     online_mask_trace=None,
     cached_full_edit_online_mask_trace=None,
+    reuse_full_edit_endpoint=False,
 ):
     if edited_state is None or winner is None: raise ValueError('rollout requires edited_state and winner')
     if strength_batch_size is not None and int(strength_batch_size) < 1:
@@ -480,6 +481,7 @@ def rollout_strengths(
                     similarity_threshold=similarity_threshold,
                     similarity_mode=similarity_mode,
                     online_mask_trace=online_mask_trace,
+                    reuse_full_edit_endpoint=reuse_full_edit_endpoint,
                     cached_full_edit_online_mask_trace=cached_full_edit_online_mask_trace,
                 )
             )
@@ -498,8 +500,8 @@ def rollout_strengths(
         if int(selected_search_step) >= int(preserve_step_count):
             raise ValueError("selected search step must be inside the preserve window")
     values = [float(v) for v in strengths]
-    reuse_winner_for_one = any(value == 1.0 for value in values)
-    model_values = [value for value in values if value != 1.0]
+    reuse_winner_for_one = bool(reuse_full_edit_endpoint and any(value == 1.0 for value in values))
+    model_values = [value for value in values if not (reuse_winner_for_one and value == 1.0)]
     output = {}
     if reuse_winner_for_one:
         output[1.0] = winner.terminal.clone()
@@ -512,7 +514,7 @@ def rollout_strengths(
                     "online_preserve_ratio": float(item["online_preserve_ratio"]),
                 })
     if not model_values:
-        return output
+        return {value: output[value] for value in values}
     x = edited_state.latents.repeat(len(model_values), 1, 1)
     s_tensor = torch.tensor(model_values, device=x.device, dtype=torch.float32).view(-1, 1, 1)
     for i, t in enumerate(edited_state.timesteps):
@@ -552,7 +554,7 @@ def rollout_strengths(
         x = _step(x, v_out, sigma, sigma_next)
     for index, value in enumerate(model_values):
         output[value] = x[index:index + 1].clone()
-    return output
+    return {value: output[value] for value in values}
 
 
 @torch.inference_mode()
