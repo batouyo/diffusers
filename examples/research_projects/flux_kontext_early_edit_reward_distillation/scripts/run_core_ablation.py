@@ -11,7 +11,7 @@ from diffusers import FluxKontextPipeline
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
-from early_edit_reward_distillation.continuous_strength import ContinuousStrengthConfig, build_bundle, prepare_sample_context, rollout_strengths, save_bundle_metadata, save_bundle_tensors
+from early_edit_reward_distillation.continuous_strength import ContinuousStrengthConfig, build_bundle, prepare_sample_context, prepare_search_context, rollout_strengths, save_bundle_metadata, save_bundle_tensors
 from early_edit_reward_distillation.metrics import region_l1
 from early_edit_reward_distillation.rewards import build_official_editscore
 
@@ -107,13 +107,22 @@ def main():
         pixel_mask = Image.open(sample_dir / "edit_mask.png").convert("L")
         instruction = str(record["instruction"]); seed = int(args.seed + global_sample_index * 100)
         prepared_context = None
+        shared_search_context = None
         for method in selected_methods:
             method_t0 = time.perf_counter()
             switches = ARMS[method]
             cfg = ContinuousStrengthConfig(steps=30, guidance_scale=2.5, alpha=args.alpha, preserve_step_count=args.preserve_step_count, edit_strength_step_count=args.edit_strength_step_count, similarity_threshold=args.similarity_threshold, generator_device=args.generator_device, search_step_indices=search_indices, strengths=strengths, **switches)
             if prepared_context is None:
                 prepared_context = prepare_sample_context(pipe, source, instruction, seed=seed, config=cfg)
-            bundle = build_bundle(pipe, source, instruction, lambda state, x: [decode(pipe, state, x)], scorer, seed=seed, config=cfg, candidate_index=0 if not switches["enable_reward"] else None, prepared_context=prepared_context)
+            method_context = prepared_context
+            if switches["enable_search"]:
+                if shared_search_context is None:
+                    shared_search_context = prepare_search_context(
+                        pipe, source, instruction, seed=seed, config=cfg,
+                        prepared_context=prepared_context,
+                    )
+                method_context = shared_search_context
+            bundle = build_bundle(pipe, source, instruction, lambda state, x: [decode(pipe, state, x)], scorer, seed=seed, config=cfg, candidate_index=0 if not switches["enable_reward"] else None, prepared_context=method_context)
             bundle.metadata["global_sample_index"] = int(global_sample_index)
             online_mask_trace = []
             values = rollout_strengths(pipe, bundle.preservation, bundle.winner, strengths, preservation_state=bundle.preservation_state, edited_state=bundle.edited_state, selected_delta_velocity=bundle.selected_delta_velocity, selected_search_edit_mask=bundle.selected_search_edit_mask, selected_search_step=bundle.selected_search_step, preserve_step_count=cfg.preserve_step_count, edit_strength_step_count=cfg.edit_strength_step_count, similarity_threshold=cfg.similarity_threshold, similarity_mode=cfg.similarity_mode, strength_batch_size=args.strength_batch_size, online_mask_trace=online_mask_trace)

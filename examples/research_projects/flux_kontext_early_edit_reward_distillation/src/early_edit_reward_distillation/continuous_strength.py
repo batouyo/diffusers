@@ -133,6 +133,11 @@ class PreparedSampleContext:
     source: Image.Image
     instruction: str
     seed: int
+    preservation_state: KontextState | None = None
+    pilot_preservation: TrajectoryTrace | None = None
+    pilot_edited: TrajectoryTrace | None = None
+    token_mask: torch.Tensor | None = None
+    mask_scores: torch.Tensor | None = None
 
 
 @torch.inference_mode()
@@ -151,6 +156,51 @@ def prepare_sample_context(pipe, source, instruction, *, seed, config):
         device=pipe._execution_device,
     )
     return PreparedSampleContext(state, source, instruction, int(seed))
+
+
+@torch.inference_mode()
+def prepare_search_context(pipe, source, instruction, *, seed, config, prepared_context=None):
+    """Prepare search-only state and pilot data once per sample."""
+    context = prepared_context or prepare_sample_context(
+        pipe, source, instruction, seed=seed, config=config
+    )
+    preservation_state = prepare_state(
+        pipe,
+        source,
+        config.neutral_prompt,
+        seed,
+        height=config.height,
+        width=config.width,
+        steps=config.steps,
+        guidance_scale=config.guidance_scale,
+        first_step_align_steps=config.first_step_align_steps,
+        generator_device=config.generator_device,
+        device=pipe._execution_device,
+    )
+    # Match build_bundle's shared initial latent alignment.
+    preservation_state.latents = context.edited_state.latents.clone()
+    pilot_preservation = deterministic_trace(pipe, preservation_state)
+    pilot_edited = deterministic_trace(pipe, context.edited_state)
+    critical = _critical_indices(context.edited_state, config)
+    token_mask, mask_scores = estimate_edit_token_mask(
+        pilot_preservation,
+        pilot_edited,
+        critical,
+        quantile=config.mask_quantile,
+        min_ratio=config.min_edit_ratio,
+        max_ratio=config.max_edit_ratio,
+    )
+    return PreparedSampleContext(
+        context.edited_state,
+        context.source,
+        context.instruction,
+        context.seed,
+        preservation_state,
+        pilot_preservation,
+        pilot_edited,
+        token_mask,
+        mask_scores,
+    )
 
 
 def _critical_indices(state_or_pipe: Any, cfg: ContinuousStrengthConfig) -> list[int]:
@@ -581,13 +631,17 @@ def build_bundle(pipe, source, instruction, decode, scorer, *, seed, config=None
         device=pipe._execution_device,
     )
     if cfg.enable_search:
-        preservation_state = prepare_state(
-            pipe, source, cfg.neutral_prompt, seed,
-            height=cfg.height, width=cfg.width, steps=cfg.steps,
-            guidance_scale=cfg.guidance_scale,
-            first_step_align_steps=cfg.first_step_align_steps,
-            generator_device=cfg.generator_device,
-            device=pipe._execution_device,
+        preservation_state = (
+            prepared_context.preservation_state
+            if prepared_context is not None and prepared_context.preservation_state is not None
+            else prepare_state(
+                pipe, source, cfg.neutral_prompt, seed,
+                height=cfg.height, width=cfg.width, steps=cfg.steps,
+                guidance_scale=cfg.guidance_scale,
+                first_step_align_steps=cfg.first_step_align_steps,
+                generator_device=cfg.generator_device,
+                device=pipe._execution_device,
+            )
         )
     else:
         preservation_state = replace(
@@ -598,11 +652,22 @@ def build_bundle(pipe, source, instruction, decode, scorer, *, seed, config=None
     preservation_state.latents = edited_state.latents.clone()
     critical = _critical_indices(edited_state, cfg)
     if cfg.enable_search:
-        pilot_p, pilot_e = deterministic_trace(pipe, preservation_state), deterministic_trace(pipe, edited_state)
-        mask, scores = estimate_edit_token_mask(
-            pilot_p, pilot_e, critical,
-            quantile=cfg.mask_quantile, min_ratio=cfg.min_edit_ratio, max_ratio=cfg.max_edit_ratio,
-        )
+        cached = prepared_context
+        if (
+            cached is not None
+            and cached.pilot_preservation is not None
+            and cached.pilot_edited is not None
+            and cached.token_mask is not None
+            and cached.mask_scores is not None
+        ):
+            pilot_p, pilot_e = cached.pilot_preservation, cached.pilot_edited
+            mask, scores = cached.token_mask, cached.mask_scores
+        else:
+            pilot_p, pilot_e = deterministic_trace(pipe, preservation_state), deterministic_trace(pipe, edited_state)
+            mask, scores = estimate_edit_token_mask(
+                pilot_p, pilot_e, critical,
+                quantile=cfg.mask_quantile, min_ratio=cfg.min_edit_ratio, max_ratio=cfg.max_edit_ratio,
+            )
     else:
         mask = torch.zeros(edited_state.latents.shape[1], device=edited_state.latents.device, dtype=torch.bool)
         scores = torch.zeros_like(mask, dtype=torch.float32)
@@ -734,7 +799,7 @@ def save_bundle_tensors(bundle, path):
     )
 
 
-__all__ = ["CallableRewardScorer", "ContinuousStrengthConfig", "RewardScorer", "RewardUnavailable", "TrajectoryBundle", "TrajectoryTrace", "build_bundle", "deterministic_trace", "estimate_edit_token_mask", "generate_coupled_branches", "load_reward_factory", "rollout_strengths", "save_bundle_metadata", "save_bundle_tensors", "select_winner", "strength_step"]
+__all__ = ["CallableRewardScorer", "ContinuousStrengthConfig", "PreparedSampleContext", "RewardScorer", "RewardUnavailable", "TrajectoryBundle", "TrajectoryTrace", "build_bundle", "deterministic_trace", "estimate_edit_token_mask", "generate_coupled_branches", "load_reward_factory", "prepare_sample_context", "prepare_search_context", "rollout_strengths", "save_bundle_metadata", "save_bundle_tensors", "select_winner", "strength_step"]
 
 
 def reference_velocity(z_t, z_source, sigma, eps=1e-8):
