@@ -13,8 +13,9 @@ import math
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Protocol, Sequence
-
 import torch
+import torch.nn.functional as F
+import torch.nn.functional as F
 from PIL import Image
 
 from .core import coupled_noise, critical_nonzero_steps, native_euler_sde_step, noise_correlations, tensor_hash
@@ -46,6 +47,10 @@ class ContinuousStrengthConfig:
     guidance_scale: float = 3.5
     critical_steps: int = 2
     critical_step_indices: tuple[int, ...] | None = None
+    intervention_steps: tuple = (4,)
+    first_step_align_steps: int = 4
+    similarity_threshold: float = 0.8
+    similarity_mode: str = "elementwise"
     num_candidates: int = 4
     alpha: float = 0.05
     diffusion_scale: float = 1.0
@@ -226,21 +231,23 @@ def generate_coupled_branches(pipe, preservation_state, edited_state, token_mask
 
 
 @torch.inference_mode()
-def rollout_strengths(pipe, preservation, winner, strengths, *, preservation_state=None, edited_state=None):
-    if preservation_state is None or edited_state is None:
-        raise ValueError("rollout requires preservation_state and edited_state")
-    if len(preservation.velocities) != len(winner.velocities):
-        raise ValueError("paired traces must have equal lengths")
+def rollout_strengths(pipe, preservation, winner, strengths, *, preservation_state=None, edited_state=None, source_latent=None, intervention_steps=None, similarity_threshold=0.8, similarity_mode=None):
+    if edited_state is None or winner is None: raise ValueError('rollout requires edited_state and winner')
+    if source_latent is None: source_latent = edited_state.image_latents
+    if similarity_mode is None: similarity_mode = 'elementwise'
+    steps = set(int(i) for i in (intervention_steps if intervention_steps is not None else (4,)))
+    residuals = winner.residuals
     output = {}
     for value in strengths:
-        s = float(value)
-        if not 0 <= s <= 1: raise ValueError("strength must lie in [0, 1]")
-        x = preservation.states[0].clone()
+        s_value = float(value)
+        x = edited_state.latents.clone()
         for i, t in enumerate(edited_state.timesteps):
-            vp = velocity(pipe, preservation_state, x, t); ve = velocity(pipe, edited_state, x, t)
-            a, b = preservation.sigmas[i]
-            x = strength_step(x, vp, ve, a, b, preservation.residuals[i], winner.residuals[i], s)
-        output[s] = x.clone()
+            v_edit = velocity(pipe, edited_state, x, t); sigma, sigma_next = _sigmas(pipe, t)
+            if i in steps: v_out, _, _, _ = velo_edit_velocity(x, source_latent, v_edit, sigma, s_value, threshold=similarity_threshold, mode=similarity_mode)
+            else: v_out = v_edit
+            x = _step(x, v_out, sigma, sigma_next)
+            if i in steps and i < len(residuals): x = (x.float() + s_value * residuals[i].float()).to(x.dtype)
+        output[s_value] = x.clone()
     return output
 
 
@@ -273,3 +280,26 @@ def save_bundle_tensors(bundle, path):
 
 
 __all__ = ["CallableRewardScorer", "ContinuousStrengthConfig", "RewardScorer", "RewardUnavailable", "TrajectoryBundle", "TrajectoryTrace", "build_bundle", "deterministic_trace", "estimate_edit_token_mask", "generate_coupled_branches", "load_reward_factory", "rollout_strengths", "save_bundle_metadata", "save_bundle_tensors", "select_winner", "strength_step"]
+
+
+def reference_velocity(z_t, z_source, sigma, eps=1e-8):
+    if z_t.shape != z_source.shape: raise ValueError('source latent shape mismatch')
+    return (z_t.float() - z_source.float()) / (float(sigma) + eps)
+
+def velocity_similarity(v_edit, v_ref, mode='elementwise', eps=1e-8):
+    if mode == 'elementwise': return ((v_ref.float().abs() + eps) / (v_ref.float().abs() + eps + (v_edit.float() - v_ref.float()).abs())).mean(dim=-1)
+    if mode == 'cosine': return (F.cosine_similarity(v_edit.float(), v_ref.float(), dim=-1, eps=eps) + 1.0) * 0.5
+    raise ValueError('similarity mode must be elementwise or cosine')
+
+def regional_velocity(v_edit, v_ref, strength, similarity, threshold=0.8):
+    if not 0.0 <= float(strength) <= 1.0: raise ValueError('strength must lie in [0, 1]')
+    preserve = (similarity >= float(threshold)).unsqueeze(-1)
+    edit = ~preserve
+    blended = (1.0 - float(strength)) * v_ref.float() + float(strength) * v_edit.float()
+    return torch.where(preserve, v_ref.float(), blended).to(v_edit.dtype), edit, preserve
+
+def velo_edit_velocity(z_t, z_source, v_edit, sigma, strength, threshold=0.8, mode='elementwise'):
+    v_ref = reference_velocity(z_t, z_source, sigma)
+    similarity = velocity_similarity(v_edit, v_ref, mode)
+    output, edit, preserve = regional_velocity(v_edit, v_ref, strength, similarity, threshold)
+    return output, edit, preserve, v_ref
