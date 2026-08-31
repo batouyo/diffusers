@@ -265,7 +265,7 @@ def generate_coupled_branches(pipe, preservation_state, edited_state, token_mask
             shared = torch.randn(e.shape, generator=gen, device=e.device, dtype=torch.float32)
             independent = torch.randn((4,) + tuple(e.shape[1:]), generator=gen, device=e.device, dtype=torch.float32)
             if cfg.independent_sde:
-                preserve_noise = torch.randn(e.shape, generator=gen, device=e.device, dtype=torch.float32)
+                preserve_noise = shared
                 mixed = independent
             elif cfg.enable_coupling:
                 preserve_noise = shared
