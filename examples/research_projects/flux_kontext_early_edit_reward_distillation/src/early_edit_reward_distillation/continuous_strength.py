@@ -228,7 +228,7 @@ def generate_coupled_branches(pipe, preservation_state, edited_state, token_mask
             independent = torch.randn((4,) + tuple(e.shape[1:]), generator=gen, device=e.device, dtype=torch.float32)
             if cfg.independent_sde:
                 preserve_noise = torch.randn(e.shape, generator=gen, device=e.device, dtype=torch.float32)
-                mixed = independent * dynamic_edit_mask.float().expand_as(independent)
+                mixed = independent
             elif cfg.enable_coupling:
                 preserve_noise = shared
                 mixed = coupled_noise(shared.expand_as(independent), independent, dynamic_edit_mask.expand_as(independent), rho=cfg.coupling_strength)
@@ -237,16 +237,23 @@ def generate_coupled_branches(pipe, preservation_state, edited_state, token_mask
                 mixed = independent * dynamic_edit_mask.float().expand_as(independent)
             correlation = noise_correlations(preserve_noise, mixed[:1], independent[:1], dynamic_edit_mask)
             p_next, _ = native_euler_sde_step(p, vp, a, b, preserve_noise, alpha=cfg.alpha, diffusion_scale=cfg.diffusion_scale, first_step=i == 0)
+            p_residual = p_next - p_mean
             candidates, terminals, diagnostics = [], [], []
             for j in range(4):
-                candidate, diag = native_euler_sde_step(e, ve, a, b, mixed[j], alpha=cfg.alpha, diffusion_scale=cfg.diffusion_scale, first_step=i == 0)
-                candidates.append(candidate); terminals.append(_terminal(pipe, edited_state, candidate, i + 1, source_latent=edited_state.image_latents, intervention_step_count=cfg.intervention_step_count, similarity_threshold=cfg.similarity_threshold, similarity_mode=cfg.similarity_mode))
-                diagnostics.append({**diag, "candidate_index": j, "candidate_seed": int(seed + i), "state_hash": tensor_hash(candidate), "finite": bool(torch.isfinite(candidate).all())})
+                raw_candidate, diag = native_euler_sde_step(e, ve, a, b, mixed[j], alpha=cfg.alpha, diffusion_scale=cfg.diffusion_scale, first_step=i == 0)
+                raw_residual = raw_candidate.float() - e_mean.float()
+                delta_residual = raw_residual - p_residual.float()
+                candidate = (e_mean.float() + delta_residual).to(e.dtype)
+                candidates.append(candidate)
+                terminals.append(_terminal(pipe, edited_state, candidate, i + 1, source_latent=edited_state.image_latents, intervention_step_count=cfg.intervention_step_count, similarity_threshold=cfg.similarity_threshold, similarity_mode=cfg.similarity_mode))
+                diagnostics.append({**diag, "candidate_index": j, "candidate_seed": int(seed + i), "raw_state_hash": tensor_hash(raw_candidate), "corrected_state_hash": tensor_hash(candidate), "raw_residual_norm": float(raw_residual.norm().item()), "delta_residual_norm": float(delta_residual.norm().item()), "finite": bool(torch.isfinite(candidate).all().item())})
             stage_images = [decode(edited_state, x)[0] for x in terminals]; branch_images.append(stage_images)
             winner_index, rewards, used = select_winner(source, stage_images, instruction, scorer if cfg.enable_reward else None, candidate_index=candidate_index if not cfg.enable_reward else None)
-            final_rewards, used_reward = rewards, used_reward or used; e_next = candidates[winner_index]
-            p_residual, e_residual = p_next - p_mean, e_next - e_mean
-            records.append({"stage": len(records) + 1, "branch_step_index": i, "post_branch_step_index": i + 1, "winner_index": winner_index, "rewards": rewards, "used_reward": used, "seed": int(seed + i), "sigma": a, "sigma_next": b, "preservation_residual_norm": float(p_residual.float().norm()), "reward_residual_norm": float(e_residual.float().norm()), **correlation, "candidate_diagnostics": diagnostics})
+            final_rewards, used_reward = rewards, used_reward or used
+            e_next = candidates[winner_index]
+            p_residual = p_next - p_mean
+            e_residual = e_next.float() - e_mean.float() + p_residual.float()
+            records.append({"stage": len(records) + 1, "branch_step_index": i, "post_branch_step_index": i + 1, "winner_index": winner_index, "rewards": rewards, "used_reward": used, "reward_candidate_policy": "corrected_e_mean_plus_delta_residual", "seed": int(seed + i), "sigma": a, "sigma_next": b, "preservation_noise_norm": float(preserve_noise.float().norm()), "edited_noise_norm_mean": float(mixed.float().norm(dim=tuple(range(1, mixed.ndim))).mean()), "preservation_residual_norm": float(p_residual.float().norm()), "edited_residual_norm": float(e_residual.float().norm()), "delta_residual_norm": float((e_residual.float() - p_residual.float()).norm()), **correlation, "candidate_diagnostics": diagnostics})
         else:
             p_next, e_next = p_mean, e_mean
         pvs.append(vp.clone()); evs.append(ve.clone()); ts.append(float(t)); ss.append((a, b)); p_residuals.append(p_residual.clone()); e_residuals.append(e_residual.clone())

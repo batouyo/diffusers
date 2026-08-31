@@ -56,11 +56,16 @@ def main():
     parser.add_argument("--search-step-indices", default=None)
     parser.add_argument("--editscore-model", default="/data15/hyp/weight/Qwen3-VL-4B-Instruct")
     parser.add_argument("--editscore-lora", default="/data15/hyp/weight/EditScore-Qwen3-VL-4B-Instruct")
+    parser.add_argument("--methods", default=None, help="comma-separated arm names; unset runs all arms")
     args = parser.parse_args()
     records = load_records(args.manifest, args.count)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     pipe = FluxKontextPipeline.from_pretrained(args.model, torch_dtype=torch.bfloat16, local_files_only=True).to(device)
     pipe.set_progress_bar_config(disable=True)
+    selected_methods = list(ARMS) if args.methods is None else [x.strip() for x in args.methods.split(",") if x.strip()]
+    unknown = [x for x in selected_methods if x not in ARMS]
+    if unknown:
+        raise ValueError(f"unknown methods: {unknown}")
     scorer = build_official_editscore(args.editscore_model, args.editscore_lora, num_pass=1)
     search_indices = None if args.search_step_indices is None else tuple(int(x) for x in args.search_step_indices.split(",") if x.strip())
     strengths = tuple(float(x) for x in np.linspace(0.0, 1.0, 10))
@@ -71,7 +76,8 @@ def main():
         source = Image.open(sample_dir / "source.png").convert("RGB")
         pixel_mask = Image.open(sample_dir / "edit_mask.png").convert("L")
         instruction = str(record["instruction"]); seed = int(args.seed + row_index * 100)
-        for method, switches in ARMS.items():
+        for method in selected_methods:
+            switches = ARMS[method]
             cfg = ContinuousStrengthConfig(steps=30, guidance_scale=2.5, alpha=args.alpha, intervention_step_count=4, search_step_indices=search_indices, strengths=strengths, **switches)
             bundle = build_bundle(pipe, source, instruction, lambda state, x: [decode(pipe, state, x)], scorer, seed=seed, config=cfg, candidate_index=0 if not switches["enable_reward"] else None)
             values = rollout_strengths(pipe, bundle.preservation, bundle.winner, strengths, preservation_state=bundle.preservation_state, edited_state=bundle.edited_state, intervention_step_count=cfg.intervention_step_count, search_step_indices=bundle.metadata.get("search_step_indices"), similarity_threshold=cfg.similarity_threshold, similarity_mode=cfg.similarity_mode)
