@@ -33,7 +33,7 @@ class KontextState:
     metadata: dict[str, Any]
 
 
-def _schedule(pipe: Any, steps: int, device: torch.device, image_tokens: int) -> tuple[torch.Tensor, float]:
+def _schedule(pipe: Any, steps: int, device: torch.device, image_tokens: int, reference_steps: int = 4) -> tuple[torch.Tensor, float, dict[str, Any]]:
     from diffusers.pipelines.flux.pipeline_flux_kontext import calculate_shift, retrieve_timesteps
 
     sigmas = np.linspace(1.0, 1.0 / steps, steps)
@@ -46,7 +46,31 @@ def _schedule(pipe: Any, steps: int, device: torch.device, image_tokens: int) ->
         config.get("max_shift", 1.15),
     )
     timesteps, _ = retrieve_timesteps(pipe.scheduler, steps, device, sigmas=sigmas, mu=mu)
-    return timesteps, float(mu)
+    raw_sigmas = pipe.scheduler.sigmas.detach().float().cpu().clone()
+    reference_sigmas = None
+    if reference_steps > 1 and steps > reference_steps:
+        reference_base = np.linspace(1.0, 1.0 / reference_steps, reference_steps)
+        retrieve_timesteps(pipe.scheduler, reference_steps, device, sigmas=reference_base, mu=mu)
+        reference_sigmas = pipe.scheduler.sigmas.detach().float().cpu().clone()
+        reference_delta = float(reference_sigmas[0] - reference_sigmas[1])
+        target = float(raw_sigmas[0]) - reference_delta
+        raw_tail = raw_sigmas[1:]
+        tail = raw_tail[raw_tail < target - 1e-6]
+        effective_sigmas = torch.cat([raw_sigmas[:1], torch.tensor([target]), tail], dim=0)
+        if float(effective_sigmas[-1]) != 0.0:
+            effective_sigmas = torch.cat([effective_sigmas, torch.zeros(1)])
+        effective_timesteps = (effective_sigmas[:-1] * float(pipe.scheduler.config.num_train_timesteps)).to(device)
+        retrieve_timesteps(pipe.scheduler, steps, device, sigmas=sigmas, mu=mu)
+    else:
+        effective_sigmas = raw_sigmas
+        effective_timesteps = timesteps
+    return effective_timesteps, float(mu), {
+        "raw_sigmas": raw_sigmas.tolist(), "reference_sigmas": None if reference_sigmas is None else reference_sigmas.tolist(),
+        "effective_sigmas": effective_sigmas.tolist(), "effective_timesteps": effective_timesteps.detach().cpu().tolist(),
+        "raw_delta_sigma": float(raw_sigmas[1] - raw_sigmas[0]),
+        "reference_delta_sigma": None if reference_sigmas is None else float(reference_sigmas[1] - reference_sigmas[0]),
+        "aligned_delta_sigma": float(effective_sigmas[1] - effective_sigmas[0]),
+    }
 
 
 @torch.inference_mode()
@@ -81,14 +105,7 @@ def prepare_state(
     if image_latents is None or image_ids is None:
         raise RuntimeError("FLUX-Kontext did not return source image conditioning latents")
     all_image_ids = torch.cat([latent_ids, image_ids], dim=0)
-    timesteps, scheduler_mu = _schedule(pipe, steps, device, latents.shape[1])
-    scheduler_sigmas = pipe.scheduler.sigmas.detach().cpu().flatten().tolist()
-    raw_delta_sigma = float(scheduler_sigmas[1] - scheduler_sigmas[0])
-    align_steps = max(1, int(first_step_align_steps))
-    reference_delta_sigma = float(-1.0 / align_steps) if align_steps > 1 else raw_delta_sigma
-    aligned_sigmas = list(scheduler_sigmas)
-    if align_steps > 1 and len(aligned_sigmas) > 2:
-        aligned_sigmas = [aligned_sigmas[0], aligned_sigmas[0] + reference_delta_sigma] + [float(x) for x in np.linspace(aligned_sigmas[0] + reference_delta_sigma, scheduler_sigmas[-1], len(scheduler_sigmas) - 1)[1:]]
+    timesteps, scheduler_mu, schedule_meta = _schedule(pipe, steps, device, latents.shape[1], first_step_align_steps)
     guidance = torch.full((latents.shape[0],), guidance_scale, device=device, dtype=torch.float32)
     return KontextState(
         latents=latents, image_latents=image_latents, image_ids=all_image_ids,
@@ -97,13 +114,8 @@ def prepare_state(
         metadata={"seed": int(seed), "guidance_scale": float(guidance_scale), "steps": int(steps),
                   "resolution": geometry, "source_original_size": [source.width, source.height],
                   "scheduler_mu": scheduler_mu,
-                  "first_step_alignment": {
-                      "enabled": bool(align_steps > 1),
-                      "reference_steps": align_steps,
-                      "raw_delta_sigma": raw_delta_sigma,
-                      "aligned_delta_sigma": reference_delta_sigma,
-                      "reference_delta_sigma": reference_delta_sigma, "aligned_sigmas": aligned_sigmas,
-                  },
+                  "first_step_alignment": {"enabled": bool(first_step_align_steps > 1 and steps > first_step_align_steps), "reference_steps": int(first_step_align_steps), **schedule_meta},
+                  "effective_schedule": schedule_meta,
                   "generated_tokens": int(latents.shape[1]),
                   "source_conditioning_tokens": int(image_latents.shape[1]),
                   "text_tokens": int(prompt_embeds.shape[1])},
@@ -132,9 +144,14 @@ def velocity(pipe: Any, state: KontextState, latents: torch.Tensor, timestep: to
 
 
 def _sigmas(pipe: Any, timestep: torch.Tensor, state: KontextState | None = None) -> tuple[float, float]:
-    index = int(pipe.scheduler.index_for_timestep(timestep))
     alignment = state.metadata.get("first_step_alignment") if state is not None else None
-    values = torch.tensor(alignment["aligned_sigmas"]) if alignment and alignment.get("enabled") and alignment.get("aligned_sigmas") else pipe.scheduler.sigmas.detach().cpu().flatten()
+    if alignment and alignment.get("effective_sigmas"):
+        values = torch.tensor(alignment["effective_sigmas"], dtype=torch.float32)
+        effective_ts = torch.tensor(alignment.get("effective_timesteps", []), dtype=torch.float32)
+        index = int(torch.argmin((effective_ts - timestep.detach().float().cpu()).abs()).item())
+    else:
+        index = int(pipe.scheduler.index_for_timestep(timestep))
+        values = pipe.scheduler.sigmas.detach().cpu().flatten()
     sigma, sigma_next = float(values[index]), float(values[index + 1])
     return sigma, sigma_next
 
@@ -161,7 +178,7 @@ def branch_step(
         raise ValueError("the minimal validation fixes K=4")
     timestep = state.timesteps[step_index]
     prediction = velocity(pipe, state, latents, timestep)
-    sigma, sigma_next = _sigmas(pipe, timestep)
+    sigma, sigma_next = _sigmas(pipe, timestep, state)
     generator = torch.Generator(device=latents.device).manual_seed(int(seed))
     shared = torch.randn(latents.shape, generator=generator, device=latents.device, dtype=torch.float32)
     independent = torch.randn((candidates,) + tuple(latents.shape[1:]), generator=generator, device=latents.device, dtype=torch.float32)

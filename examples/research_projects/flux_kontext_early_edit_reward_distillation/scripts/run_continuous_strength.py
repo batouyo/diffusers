@@ -76,6 +76,9 @@ def main() -> None:
     parser.add_argument("--search-step-indices", default=None, help="comma-separated early SDE search transition indices")
     parser.add_argument("--intervention-step-count", type=int, default=4)
     parser.add_argument("--strengths", default="0,0.25,0.5,0.75,1")
+    parser.add_argument("--disable-search", action="store_true")
+    parser.add_argument("--disable-reward", action="store_true")
+    parser.add_argument("--disable-coupling", action="store_true")
     args = parser.parse_args()
     if args.reward_factory and args.candidate_index is not None:
         raise ValueError("choose --reward-factory or --candidate-index, not both")
@@ -85,7 +88,7 @@ def main() -> None:
     pipe.set_progress_bar_config(disable=True)
     critical_indices = None if args.critical_step_indices is None else tuple(int(x) for x in args.critical_step_indices.split(",") if x.strip())
     search_indices = None if args.search_step_indices is None else tuple(int(x) for x in args.search_step_indices.split(",") if x.strip())
-    config = ContinuousStrengthConfig(height=args.height, width=args.width, steps=args.steps, guidance_scale=args.guidance, alpha=args.alpha, coupling_strength=args.coupling_strength, critical_step_indices=critical_indices, search_step_indices=search_indices, intervention_step_count=args.intervention_step_count, strengths=tuple(float(x) for x in args.strengths.split(",")))
+    config = ContinuousStrengthConfig(height=args.height, width=args.width, steps=args.steps, guidance_scale=args.guidance, alpha=args.alpha, coupling_strength=args.coupling_strength, critical_step_indices=critical_indices, search_step_indices=search_indices, intervention_step_count=args.intervention_step_count, strengths=tuple(float(x) for x in args.strengths.split(",")), enable_search=not args.disable_search, enable_reward=not args.disable_reward, enable_coupling=not args.disable_coupling)
     output = Path(args.output); output.mkdir(parents=True, exist_ok=True)
     rows = []
     for record_index, (sample_id, sample_dir, instruction) in enumerate(load_records(args)):

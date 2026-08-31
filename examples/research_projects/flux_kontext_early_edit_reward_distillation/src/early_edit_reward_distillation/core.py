@@ -48,7 +48,10 @@ def regional_delta_norms(candidate: torch.Tensor, mean: torch.Tensor, edit_mask:
     return {"delta_norm": float(delta.norm().item()), "preserve_delta_norm": float(preserve.norm().item()), "edit_delta_norm": float(edit.norm().item())}
 
 def noise_correlations(shared: torch.Tensor, mixed: torch.Tensor, independent: torch.Tensor, edit_mask: torch.Tensor) -> dict[str, float]:
-    mask = edit_mask.to(device=shared.device, dtype=torch.bool).reshape(1, -1, 1).expand_as(shared)
+    mask = edit_mask.to(device=shared.device, dtype=torch.bool)
+    if mask.shape != shared.shape:
+        mask = mask.reshape(1, -1, 1)
+    mask = mask.expand_as(shared)
     def corr(a: torch.Tensor, b: torch.Tensor) -> float:
         a, b = a.flatten().float(), b.flatten().float()
         if a.numel() < 2 or a.std() == 0 or b.std() == 0: return float("nan")
