@@ -47,7 +47,8 @@ class ContinuousStrengthConfig:
     guidance_scale: float = 3.5
     critical_steps: int = 2
     critical_step_indices: tuple[int, ...] | None = None
-    intervention_steps: tuple = (4,)
+    intervention_step_count: int = 4
+    search_step_indices: tuple[int, ...] | None = None
     first_step_align_steps: int = 4
     similarity_threshold: float = 0.8
     similarity_mode: str = "elementwise"
@@ -63,7 +64,7 @@ class ContinuousStrengthConfig:
     def __post_init__(self):
         if self.num_candidates != 4:
             raise ValueError("the minimal prototype fixes num_candidates=4")
-        if self.critical_steps < 1:
+        if self.critical_steps < 1 or self.intervention_step_count < 0:
             raise ValueError("critical_steps must be positive")
         if self.critical_step_indices is not None and not self.critical_step_indices:
             raise ValueError("critical_step_indices cannot be empty")
@@ -116,7 +117,8 @@ class TrajectoryBundle:
 def _critical_indices(pipe: Any, cfg: ContinuousStrengthConfig) -> list[int]:
     valid = critical_nonzero_steps(pipe.scheduler.sigmas.detach().cpu().flatten().tolist())
     valid_indices = {int(x["index"]) for x in valid}
-    indices = list(cfg.critical_step_indices) if cfg.critical_step_indices is not None else [int(x["index"]) for x in valid[: cfg.critical_steps]]
+    requested = cfg.search_step_indices if cfg.search_step_indices is not None else cfg.critical_step_indices
+    indices = list(requested) if requested is not None else [int(x["index"]) for x in valid[: cfg.critical_steps]]
     if len(indices) != len(set(indices)) or any(i not in valid_indices for i in indices):
         raise ValueError("critical_step_indices must be unique non-zero scheduler transitions")
     return sorted(indices)
@@ -143,7 +145,7 @@ def deterministic_trace(pipe: Any, state: KontextState) -> TrajectoryTrace:
     velocities, timesteps, sigmas, residuals = [], [], [], []
     for timestep in state.timesteps:
         v = velocity(pipe, state, x, timestep)
-        sigma, sigma_next = _sigmas(pipe, timestep)
+        sigma, sigma_next = _sigmas(pipe, timestep, state)
         x = _step(x, v, sigma, sigma_next)
         velocities.append(v.clone()); timesteps.append(float(timestep)); sigmas.append((sigma, sigma_next)); residuals.append(torch.zeros_like(x)); states.append(x.clone())
     return TrajectoryTrace(str(state.metadata.get("prompt", "")), states, velocities, timesteps, sigmas, x.clone(), residuals)
@@ -188,9 +190,15 @@ def select_winner(source, candidates, instruction, scorer, *, candidate_index=No
 
 
 @torch.inference_mode()
-def _terminal(pipe, state, x, start):
+def _terminal(pipe, state, x, start, *, source_latent=None, intervention_step_count=0, similarity_threshold=0.8, similarity_mode="elementwise"):
+    source_latent = state.image_latents if source_latent is None else source_latent
     for i in range(start, len(state.timesteps)):
-        t = state.timesteps[i]; v = velocity(pipe, state, x, t); a, b = _sigmas(pipe, t); x = _step(x, v, a, b)
+        t = state.timesteps[i]; v_edit = velocity(pipe, state, x, t); a, b = _sigmas(pipe, t, state)
+        if i < int(intervention_step_count):
+            v = velo_edit_velocity(x, source_latent, v_edit, a, 1.0, threshold=similarity_threshold, mode=similarity_mode)[0]
+        else:
+            v = v_edit
+        x = _step(x, v, a, b)
     return x
 
 
@@ -201,8 +209,11 @@ def generate_coupled_branches(pipe, preservation_state, edited_state, token_mask
     records, branch_images = [], []; final_rewards = []; winner_index = 0; used_reward = False
     mask = token_mask.to(e.device, dtype=torch.bool).reshape(1, -1, 1)
     for i, t in enumerate(edited_state.timesteps):
-        vp, ve = velocity(pipe, preservation_state, p, t), velocity(pipe, edited_state, e, t)
-        a, b = _sigmas(pipe, t); p_mean, e_mean = _step(p, vp, a, b), _step(e, ve, a, b)
+        a, b = _sigmas(pipe, t, edited_state)
+        vp = reference_velocity(p, preservation_state.image_latents, a)
+        ve_raw = velocity(pipe, edited_state, e, t)
+        ve = velo_edit_velocity(e, edited_state.image_latents, ve_raw, a, 1.0, threshold=cfg.similarity_threshold, mode=cfg.similarity_mode)[0] if i < int(cfg.intervention_step_count) else ve_raw
+        p_mean, e_mean = _step(p, vp, a, b), _step(e, ve, a, b)
         p_residual = torch.zeros_like(p); e_residual = torch.zeros_like(e)
         if i in critical:
             gen = torch.Generator(device=e.device).manual_seed(int(seed + i))
@@ -214,7 +225,7 @@ def generate_coupled_branches(pipe, preservation_state, edited_state, token_mask
             candidates, terminals, diagnostics = [], [], []
             for j in range(4):
                 candidate, diag = native_euler_sde_step(e, ve, a, b, mixed[j], alpha=cfg.alpha, diffusion_scale=cfg.diffusion_scale, first_step=i == 0)
-                candidates.append(candidate); terminals.append(_terminal(pipe, edited_state, candidate, i + 1))
+                candidates.append(candidate); terminals.append(_terminal(pipe, edited_state, candidate, i + 1, source_latent=edited_state.image_latents, intervention_step_count=cfg.intervention_step_count, similarity_threshold=cfg.similarity_threshold, similarity_mode=cfg.similarity_mode))
                 diagnostics.append({**diag, "candidate_index": j, "candidate_seed": int(seed + i), "state_hash": tensor_hash(candidate), "finite": bool(torch.isfinite(candidate).all())})
             stage_images = [decode(edited_state, x)[0] for x in terminals]; branch_images.append(stage_images)
             winner_index, rewards, used = select_winner(source, stage_images, instruction, scorer, candidate_index=candidate_index)
@@ -231,22 +242,22 @@ def generate_coupled_branches(pipe, preservation_state, edited_state, token_mask
 
 
 @torch.inference_mode()
-def rollout_strengths(pipe, preservation, winner, strengths, *, preservation_state=None, edited_state=None, source_latent=None, intervention_steps=None, similarity_threshold=0.8, similarity_mode=None):
+def rollout_strengths(pipe, preservation, winner, strengths, *, preservation_state=None, edited_state=None, source_latent=None, intervention_step_count=4, search_step_indices=None, similarity_threshold=0.8, similarity_mode=None):
     if edited_state is None or winner is None: raise ValueError('rollout requires edited_state and winner')
     if source_latent is None: source_latent = edited_state.image_latents
     if similarity_mode is None: similarity_mode = 'elementwise'
-    steps = set(int(i) for i in (intervention_steps if intervention_steps is not None else (4,)))
-    residuals = winner.residuals
+    steps = set(int(i) for i in (search_step_indices or ()))
     output = {}
     for value in strengths:
         s_value = float(value)
         x = edited_state.latents.clone()
         for i, t in enumerate(edited_state.timesteps):
-            v_edit = velocity(pipe, edited_state, x, t); sigma, sigma_next = _sigmas(pipe, t)
-            if i in steps: v_out, _, _, _ = velo_edit_velocity(x, source_latent, v_edit, sigma, s_value, threshold=similarity_threshold, mode=similarity_mode)
+            v_edit = velocity(pipe, edited_state, x, t); sigma, sigma_next = _sigmas(pipe, t, edited_state)
+            if i < int(intervention_step_count): v_out, _, _, _ = velo_edit_velocity(x, source_latent, v_edit, sigma, s_value, threshold=similarity_threshold, mode=similarity_mode)
             else: v_out = v_edit
             x = _step(x, v_out, sigma, sigma_next)
-            if i in steps and i < len(residuals): x = (x.float() + s_value * residuals[i].float()).to(x.dtype)
+            if i in steps and i < len(winner.residuals) and i < len(preservation.residuals):
+                x = (x.float() + s_value * (winner.residuals[i].float() - preservation.residuals[i].float())).to(x.dtype)
         output[s_value] = x.clone()
     return output
 
@@ -254,13 +265,13 @@ def rollout_strengths(pipe, preservation, winner, strengths, *, preservation_sta
 @torch.inference_mode()
 def build_bundle(pipe, source, instruction, decode, scorer, *, seed, config=None, candidate_index=None):
     cfg = config or ContinuousStrengthConfig()
-    edited_state = prepare_state(pipe, source, instruction, seed, height=cfg.height, width=cfg.width, steps=cfg.steps, guidance_scale=cfg.guidance_scale, device=pipe._execution_device)
-    preservation_state = prepare_state(pipe, source, cfg.neutral_prompt, seed, height=cfg.height, width=cfg.width, steps=cfg.steps, guidance_scale=cfg.guidance_scale, device=pipe._execution_device)
+    edited_state = prepare_state(pipe, source, instruction, seed, height=cfg.height, width=cfg.width, steps=cfg.steps, guidance_scale=cfg.guidance_scale, first_step_align_steps=cfg.first_step_align_steps, device=pipe._execution_device)
+    preservation_state = prepare_state(pipe, source, cfg.neutral_prompt, seed, height=cfg.height, width=cfg.width, steps=cfg.steps, guidance_scale=cfg.guidance_scale, first_step_align_steps=cfg.first_step_align_steps, device=pipe._execution_device)
     preservation_state.latents = edited_state.latents.clone()
     pilot_p, pilot_e = deterministic_trace(pipe, preservation_state), deterministic_trace(pipe, edited_state)
     critical = _critical_indices(pipe, cfg); mask, scores = estimate_edit_token_mask(pilot_p, pilot_e, critical, quantile=cfg.mask_quantile, min_ratio=cfg.min_edit_ratio, max_ratio=cfg.max_edit_ratio)
     preservation, winner, records, index, rewards, used, images = generate_coupled_branches(pipe, preservation_state, edited_state, mask, source, instruction, decode, scorer, seed=seed + 10000, cfg=cfg, candidate_index=candidate_index)
-    metadata = {"seed": int(seed), "instruction": instruction, "neutral_prompt": cfg.neutral_prompt, "config": asdict(cfg), "critical_indices": critical, "generated_tokens": int(edited_state.metadata["generated_tokens"]), "source_conditioning_tokens": int(edited_state.metadata["source_conditioning_tokens"]), "token_mask": mask.cpu().tolist(), "mask_scores": scores.cpu().tolist(), "reward_selected": bool(used and candidate_index is None), "coupled_sde": "preservation/edit share noise outside edit mask; edited candidates use independent noise inside edit mask", "preservation": preservation.metadata(), "winner": winner.metadata()}
+    metadata = {"seed": int(seed), "instruction": instruction, "neutral_prompt": cfg.neutral_prompt, "config": asdict(cfg), "critical_indices": critical, "search_step_indices": critical, "intervention_step_count": cfg.intervention_step_count, "intervention_steps_applied": list(range(min(cfg.intervention_step_count, len(edited_state.timesteps)))), "generated_tokens": int(edited_state.metadata["generated_tokens"]), "source_conditioning_tokens": int(edited_state.metadata["source_conditioning_tokens"]), "token_mask": mask.cpu().tolist(), "mask_scores": scores.cpu().tolist(), "reward_selected": bool(used and candidate_index is None), "coupled_sde": "preservation/edit share noise outside edit mask; edited candidates use independent noise inside edit mask", "first_step_alignment": edited_state.metadata.get("first_step_alignment"), "preservation": preservation.metadata(), "winner": winner.metadata()}
     return TrajectoryBundle(preservation, pilot_e, winner, mask, scores, records, index, rewards, metadata, images, preservation_state, edited_state)
 
 
@@ -287,13 +298,13 @@ def reference_velocity(z_t, z_source, sigma, eps=1e-8):
     return (z_t.float() - z_source.float()) / (float(sigma) + eps)
 
 def velocity_similarity(v_edit, v_ref, mode='elementwise', eps=1e-8):
-    if mode == 'elementwise': return ((v_ref.float().abs() + eps) / (v_ref.float().abs() + eps + (v_edit.float() - v_ref.float()).abs())).mean(dim=-1)
+    if mode == 'elementwise': return (v_ref.float().abs() + eps) / (v_ref.float().abs() + eps + (v_edit.float() - v_ref.float()).abs())
     if mode == 'cosine': return (F.cosine_similarity(v_edit.float(), v_ref.float(), dim=-1, eps=eps) + 1.0) * 0.5
     raise ValueError('similarity mode must be elementwise or cosine')
 
 def regional_velocity(v_edit, v_ref, strength, similarity, threshold=0.8):
     if not 0.0 <= float(strength) <= 1.0: raise ValueError('strength must lie in [0, 1]')
-    preserve = (similarity >= float(threshold)).unsqueeze(-1)
+    preserve = similarity >= float(threshold)
     edit = ~preserve
     blended = (1.0 - float(strength)) * v_ref.float() + float(strength) * v_edit.float()
     return torch.where(preserve, v_ref.float(), blended).to(v_edit.dtype), edit, preserve

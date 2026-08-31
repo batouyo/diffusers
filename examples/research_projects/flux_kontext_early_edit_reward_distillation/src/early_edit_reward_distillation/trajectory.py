@@ -60,6 +60,7 @@ def prepare_state(
     width: int = 512,
     steps: int = 28,
     guidance_scale: float = 3.5,
+    first_step_align_steps: int = 4,
     device: torch.device | str = "cuda",
 ) -> KontextState:
     device = torch.device(device)
@@ -81,6 +82,13 @@ def prepare_state(
         raise RuntimeError("FLUX-Kontext did not return source image conditioning latents")
     all_image_ids = torch.cat([latent_ids, image_ids], dim=0)
     timesteps, scheduler_mu = _schedule(pipe, steps, device, latents.shape[1])
+    scheduler_sigmas = pipe.scheduler.sigmas.detach().cpu().flatten().tolist()
+    raw_delta_sigma = float(scheduler_sigmas[1] - scheduler_sigmas[0])
+    align_steps = max(1, int(first_step_align_steps))
+    reference_delta_sigma = float(-1.0 / align_steps) if align_steps > 1 else raw_delta_sigma
+    aligned_sigmas = list(scheduler_sigmas)
+    if align_steps > 1 and len(aligned_sigmas) > 2:
+        aligned_sigmas = [aligned_sigmas[0], aligned_sigmas[0] + reference_delta_sigma] + [float(x) for x in np.linspace(aligned_sigmas[0] + reference_delta_sigma, scheduler_sigmas[-1], len(scheduler_sigmas) - 1)[1:]]
     guidance = torch.full((latents.shape[0],), guidance_scale, device=device, dtype=torch.float32)
     return KontextState(
         latents=latents, image_latents=image_latents, image_ids=all_image_ids,
@@ -89,6 +97,13 @@ def prepare_state(
         metadata={"seed": int(seed), "guidance_scale": float(guidance_scale), "steps": int(steps),
                   "resolution": geometry, "source_original_size": [source.width, source.height],
                   "scheduler_mu": scheduler_mu,
+                  "first_step_alignment": {
+                      "enabled": bool(align_steps > 1),
+                      "reference_steps": align_steps,
+                      "raw_delta_sigma": raw_delta_sigma,
+                      "aligned_delta_sigma": reference_delta_sigma,
+                      "reference_delta_sigma": reference_delta_sigma, "aligned_sigmas": aligned_sigmas,
+                  },
                   "generated_tokens": int(latents.shape[1]),
                   "source_conditioning_tokens": int(image_latents.shape[1]),
                   "text_tokens": int(prompt_embeds.shape[1])},
@@ -116,14 +131,16 @@ def velocity(pipe: Any, state: KontextState, latents: torch.Tensor, timestep: to
     return output[:, : latents.shape[1]]
 
 
-def _sigmas(pipe: Any, timestep: torch.Tensor) -> tuple[float, float]:
+def _sigmas(pipe: Any, timestep: torch.Tensor, state: KontextState | None = None) -> tuple[float, float]:
     index = int(pipe.scheduler.index_for_timestep(timestep))
-    values = pipe.scheduler.sigmas.detach().cpu().flatten()
-    return float(values[index]), float(values[index + 1])
+    alignment = state.metadata.get("first_step_alignment") if state is not None else None
+    values = torch.tensor(alignment["aligned_sigmas"]) if alignment and alignment.get("enabled") and alignment.get("aligned_sigmas") else pipe.scheduler.sigmas.detach().cpu().flatten()
+    sigma, sigma_next = float(values[index]), float(values[index + 1])
+    return sigma, sigma_next
 
 
-def ode_step(pipe: Any, latents: torch.Tensor, prediction: torch.Tensor, timestep: torch.Tensor) -> torch.Tensor:
-    sigma, next_sigma = _sigmas(pipe, timestep)
+def ode_step(pipe: Any, latents: torch.Tensor, prediction: torch.Tensor, timestep: torch.Tensor, state: KontextState | None = None) -> torch.Tensor:
+    sigma, next_sigma = _sigmas(pipe, timestep, state)
     return (latents.float() + (next_sigma - sigma) * prediction.float()).to(latents.dtype)
 
 
