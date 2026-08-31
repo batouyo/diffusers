@@ -118,8 +118,14 @@ class TrajectoryBundle:
     edited_state: Any = None
 
 
-def _critical_indices(pipe: Any, cfg: ContinuousStrengthConfig) -> list[int]:
-    valid = critical_nonzero_steps(pipe.scheduler.sigmas.detach().cpu().flatten().tolist())
+def _critical_indices(state_or_pipe: Any, cfg: ContinuousStrengthConfig) -> list[int]:
+    """Select stochastic transitions from the prepared state's effective schedule."""
+    values = None
+    if hasattr(state_or_pipe, "metadata"):
+        values = state_or_pipe.metadata.get("effective_schedule", {}).get("effective_sigmas")
+    if values is None:
+        values = state_or_pipe.scheduler.sigmas.detach().cpu().flatten().tolist()
+    valid = critical_nonzero_steps([float(x) for x in values])
     valid_indices = {int(x["index"]) for x in valid}
     requested = cfg.search_step_indices if cfg.search_step_indices is not None else cfg.critical_step_indices
     indices = list(requested) if requested is not None else [int(x["index"]) for x in valid[: cfg.critical_steps]]
@@ -264,23 +270,39 @@ def generate_coupled_branches(pipe, preservation_state, edited_state, token_mask
 
 
 @torch.inference_mode()
-def rollout_strengths(pipe, preservation, winner, strengths, *, preservation_state=None, edited_state=None, source_latent=None, intervention_step_count=4, search_step_indices=None, similarity_threshold=0.8, similarity_mode=None):
+def rollout_strengths(pipe, preservation, winner, strengths, *, preservation_state=None, edited_state=None, source_latent=None, intervention_step_count=4, search_step_indices=None, similarity_threshold=0.8, similarity_mode=None, strength_batch_size=None):
     if edited_state is None or winner is None: raise ValueError('rollout requires edited_state and winner')
+    if strength_batch_size is not None and int(strength_batch_size) < 1:
+        raise ValueError('strength_batch_size must be positive')
+    if strength_batch_size is not None and len(strengths) > int(strength_batch_size):
+        merged = {}
+        values = list(strengths)
+        for start in range(0, len(values), int(strength_batch_size)):
+            merged.update(rollout_strengths(pipe, preservation, winner, values[start:start + int(strength_batch_size)], preservation_state=preservation_state, edited_state=edited_state, source_latent=source_latent, intervention_step_count=intervention_step_count, search_step_indices=search_step_indices, similarity_threshold=similarity_threshold, similarity_mode=similarity_mode))
+        return merged
     if source_latent is None: source_latent = edited_state.image_latents
     if similarity_mode is None: similarity_mode = 'elementwise'
     steps = set(int(i) for i in (search_step_indices or ()))
+    values = [float(v) for v in strengths]
     output = {}
-    for value in strengths:
-        s_value = float(value)
-        x = edited_state.latents.clone()
-        for i, t in enumerate(edited_state.timesteps):
-            v_edit = velocity(pipe, edited_state, x, t); sigma, sigma_next = _sigmas(pipe, t, edited_state)
-            if i < int(intervention_step_count): v_out, _, _, _ = velo_edit_velocity(x, source_latent, v_edit, sigma, s_value, threshold=similarity_threshold, mode=similarity_mode)
-            else: v_out = v_edit
-            x = _step(x, v_out, sigma, sigma_next)
-            if i in steps and i < len(winner.residuals) and i < len(preservation.residuals):
-                x = (x.float() + s_value * (winner.residuals[i].float() - preservation.residuals[i].float())).to(x.dtype)
-        output[s_value] = x.clone()
+    x = edited_state.latents.repeat(len(values), 1, 1)
+    s_tensor = torch.tensor(values, device=x.device, dtype=torch.float32).view(-1, 1, 1)
+    for i, t in enumerate(edited_state.timesteps):
+        v_edit = velocity(pipe, edited_state, x, t)
+        sigma, sigma_next = _sigmas(pipe, t, edited_state)
+        if i < int(intervention_step_count):
+            src = source_latent if source_latent is not None else edited_state.image_latents
+            v_ref = reference_velocity(x, src, sigma)
+            similarity = velocity_similarity(v_edit, v_ref, similarity_mode)
+            v_out, _, _ = regional_velocity(v_edit, v_ref, s_tensor, similarity, similarity_threshold)
+        else:
+            v_out = v_edit
+        x = _step(x, v_out, sigma, sigma_next)
+        if i in steps and i < len(winner.residuals) and i < len(preservation.residuals):
+            delta = winner.residuals[i].float() - preservation.residuals[i].float()
+            x = (x.float() + s_tensor * delta).to(x.dtype)
+    for index, value in enumerate(values):
+        output[value] = x[index:index + 1].clone()
     return output
 
 
@@ -291,7 +313,7 @@ def build_bundle(pipe, source, instruction, decode, scorer, *, seed, config=None
     preservation_state = prepare_state(pipe, source, cfg.neutral_prompt, seed, height=cfg.height, width=cfg.width, steps=cfg.steps, guidance_scale=cfg.guidance_scale, first_step_align_steps=cfg.first_step_align_steps, device=pipe._execution_device)
     preservation_state.latents = edited_state.latents.clone()
     pilot_p, pilot_e = deterministic_trace(pipe, preservation_state), deterministic_trace(pipe, edited_state)
-    critical = _critical_indices(pipe, cfg); mask, scores = estimate_edit_token_mask(pilot_p, pilot_e, critical, quantile=cfg.mask_quantile, min_ratio=cfg.min_edit_ratio, max_ratio=cfg.max_edit_ratio)
+    critical = _critical_indices(edited_state, cfg); mask, scores = estimate_edit_token_mask(pilot_p, pilot_e, critical, quantile=cfg.mask_quantile, min_ratio=cfg.min_edit_ratio, max_ratio=cfg.max_edit_ratio)
     preservation, winner, records, index, rewards, used, images = generate_coupled_branches(pipe, preservation_state, edited_state, mask, source, instruction, decode, scorer, seed=seed + 10000, cfg=cfg, candidate_index=candidate_index)
     metadata = {"seed": int(seed), "instruction": instruction, "neutral_prompt": cfg.neutral_prompt, "config": asdict(cfg), "critical_indices": critical, "search_step_indices": critical if cfg.enable_search else [], "intervention_step_count": cfg.intervention_step_count, "intervention_steps_applied": list(range(min(cfg.intervention_step_count, len(edited_state.timesteps)))), "generated_tokens": int(edited_state.metadata["generated_tokens"]), "source_conditioning_tokens": int(edited_state.metadata["source_conditioning_tokens"]), "token_mask": mask.cpu().tolist(), "mask_scores": scores.cpu().tolist(), "reward_selected": bool(used and candidate_index is None), "coupled_sde": "preservation/edit share noise outside edit mask; edited candidates use independent noise inside edit mask", "first_step_alignment": edited_state.metadata.get("first_step_alignment"), "preservation": preservation.metadata(), "winner": winner.metadata()}
     metadata["schedule_trace"] = [{"step_index": int(i), "model_timestep": float(t), "sigma": float(_sigmas(pipe, t, edited_state)[0]), "sigma_next": float(_sigmas(pipe, t, edited_state)[1]), "intervention": bool(i < int(cfg.intervention_step_count))} for i, t in enumerate(edited_state.timesteps)]
@@ -323,6 +345,8 @@ __all__ = ["CallableRewardScorer", "ContinuousStrengthConfig", "RewardScorer", "
 
 
 def reference_velocity(z_t, z_source, sigma, eps=1e-8):
+    if z_source.shape[0] == 1 and z_t.shape[0] != 1:
+        z_source = z_source.expand(z_t.shape[0], -1, -1)
     if z_t.shape != z_source.shape: raise ValueError('source latent shape mismatch')
     return (z_t.float() - z_source.float()) / (float(sigma) + eps)
 
@@ -332,10 +356,13 @@ def velocity_similarity(v_edit, v_ref, mode='elementwise', eps=1e-8):
     raise ValueError('similarity mode must be elementwise or cosine')
 
 def regional_velocity(v_edit, v_ref, strength, similarity, threshold=0.8):
-    if not 0.0 <= float(strength) <= 1.0: raise ValueError('strength must lie in [0, 1]')
+    strength_tensor = torch.as_tensor(strength, device=v_edit.device, dtype=torch.float32)
+    if bool(torch.any((strength_tensor < 0) | (strength_tensor > 1))): raise ValueError('strength must lie in [0, 1]')
+    while strength_tensor.ndim < v_edit.ndim:
+        strength_tensor = strength_tensor.unsqueeze(-1)
     preserve = similarity >= float(threshold)
     edit = ~preserve
-    blended = (1.0 - float(strength)) * v_ref.float() + float(strength) * v_edit.float()
+    blended = (1.0 - strength_tensor) * v_ref.float() + strength_tensor * v_edit.float()
     return torch.where(preserve, v_ref.float(), blended).to(v_edit.dtype), edit, preserve
 
 def velo_edit_velocity(z_t, z_source, v_edit, sigma, strength, threshold=0.8, mode='elementwise'):

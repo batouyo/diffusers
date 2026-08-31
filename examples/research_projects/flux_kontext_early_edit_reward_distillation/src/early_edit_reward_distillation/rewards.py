@@ -30,6 +30,9 @@ class EditScoreAdapter:
 
     def score(self, source: Image.Image, candidate: Image.Image, instruction: str) -> float:
         return float(self.score_details(source, candidate, instruction)["overall"])
+    def score_many(self, source, candidates, instruction):
+        return [self.score(source, candidate, instruction) for candidate in candidates]
+
 
 def build_official_editscore(model_name_or_path: str = "/data15/hyp/weight/Qwen3-VL-4B-Instruct", lora_path: str = "/data15/hyp/weight/EditScore-Qwen3-VL-4B-Instruct", *, score_range: int = 25, num_pass: int = 1) -> EditScoreAdapter:
     """Load the locally cached official EditScore evaluator."""
