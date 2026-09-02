@@ -26,7 +26,9 @@ DEFAULT_MODEL_PATH = "/data15/hyp/weight/FLUX.1-Kontext-dev"
 DEFAULT_SIGLIP_PATH = "/data15/hyp/weight/reward_models/siglip-so400m-patch14-384"
 DEFAULT_OUTPUT_DIR = "/data15/hyp/project_storage/flux-kontext-block-probing/reward_gradient_visualization"
 DEFAULT_EDIT_INSTRUCTION = "Change the cup to black."
-DEFAULT_REWARD_TEXT = "a black cup"
+DEFAULT_SOURCE_REWARD_TEXT = "a red cup"
+DEFAULT_TARGET_REWARD_TEXT = "a black cup"
+FIXED_NUM_INFERENCE_STEPS = 15
 DEFAULT_STEPS = (1, 2, 3, 4, 8, 12, 15)
 
 
@@ -72,6 +74,37 @@ def compute_image_gradient(image: torch.Tensor, reward_fn) -> tuple[torch.Tensor
     return reward.detach(), image_grad.detach()
 
 
+def directional_reward(target_score: torch.Tensor, source_score: torch.Tensor) -> torch.Tensor:
+    return target_score - source_score
+
+
+def per_step_percentile_normalize(magnitudes: dict[int, np.ndarray], low_percentile: float = 1.0, high_percentile: float = 99.0):
+    if not 0 <= low_percentile < high_percentile <= 100:
+        raise ValueError("percentiles must satisfy 0 <= low < high <= 100")
+    normalized, bounds = {}, {}
+    for step, value in magnitudes.items():
+        low = float(np.percentile(value, low_percentile))
+        high = float(np.percentile(value, high_percentile))
+        if not np.isfinite(low) or not np.isfinite(high):
+            raise ValueError("gradient magnitudes contain non-finite values")
+        if high <= low:
+            high = low + 1e-12
+        normalized[step] = np.clip((value.astype(np.float32) - low) / (high - low), 0.0, 1.0).astype(np.float32)
+        bounds[step] = (low, high)
+    return normalized, bounds
+
+
+def smooth_heatmap(heatmap: np.ndarray, gaussian_sigma: float) -> np.ndarray:
+    if gaussian_sigma <= 0:
+        return np.clip(heatmap.astype(np.float32), 0.0, 1.0)
+    from scipy.ndimage import gaussian_filter
+    return np.clip(gaussian_filter(heatmap.astype(np.float32), sigma=float(gaussian_sigma), mode="nearest"), 0.0, 1.0)
+
+
+def heatmap_rgb(heatmap: np.ndarray, gaussian_sigma: float = 0.0) -> np.ndarray:
+    return plt.get_cmap("turbo")(smooth_heatmap(heatmap, gaussian_sigma))[..., :3].astype(np.float32)
+
+
 def global_percentile_normalize(magnitudes: dict[int, np.ndarray], low_percentile: float = 1.0, high_percentile: float = 99.0):
     if not 0 <= low_percentile < high_percentile <= 100:
         raise ValueError("percentiles must satisfy 0 <= low < high <= 100")
@@ -107,8 +140,6 @@ def make_overlay(image: np.ndarray, heatmap: np.ndarray, alpha: float = 0.45, ga
         display_heatmap = gaussian_filter(display_heatmap, sigma=float(gaussian_sigma), mode="nearest")
         display_heatmap = np.clip(display_heatmap, 0.0, 1.0)
     colors = plt.get_cmap("turbo")(display_heatmap)[..., :3]
-    # Modulate opacity by normalized magnitude so low-signal background
-    # remains visible while high-gradient regions reach the requested alpha.
     effective_alpha = alpha * display_heatmap[..., None]
     return np.clip((1.0 - effective_alpha) * image + effective_alpha * colors, 0.0, 1.0)
 
@@ -140,11 +171,10 @@ def _resolve_dimensions(pipe, source: Image.Image, max_area: int) -> tuple[int, 
 
 
 class TorchSigLIPReward:
-    """SigLIP reward with torch-only image preprocessing."""
+    """SigLIP cosine scores with differentiable torch-only preprocessing."""
 
     def __init__(self, model_path: str, device: torch.device, dtype: torch.dtype = torch.float32):
         from transformers import SiglipModel, SiglipTokenizer
-
         self.model = SiglipModel.from_pretrained(model_path, local_files_only=True, torch_dtype=dtype).to(device)
         self.tokenizer = SiglipTokenizer.from_pretrained(model_path, local_files_only=True)
         self.model.eval().requires_grad_(False)
@@ -153,9 +183,9 @@ class TorchSigLIPReward:
         self.image_size = int(getattr(vision_cfg, "image_size", 384))
         self.image_mean = tuple(getattr(vision_cfg, "image_mean", (0.5, 0.5, 0.5)))
         self.image_std = tuple(getattr(vision_cfg, "image_std", (0.5, 0.5, 0.5)))
-        self.device = device
-        self.dtype = dtype
-        self._text_features = None
+        self.device, self.dtype = device, dtype
+        self._target_features = None
+        self._source_features = None
 
     @staticmethod
     def _extract_features(output: object) -> torch.Tensor:
@@ -167,32 +197,69 @@ class TorchSigLIPReward:
                 return value.mean(dim=1) if name == "last_hidden_state" and value.ndim >= 3 else value
         raise TypeError(f"unsupported SigLIP output type: {type(output)}")
 
-    def prepare(self, text: str) -> None:
-        inputs = self.tokenizer(text, padding=True, truncation=True, return_tensors="pt")
+    def prepare(self, source_text: str, target_text: str) -> None:
+        inputs = self.tokenizer([source_text, target_text], padding="max_length", truncation=True, return_tensors="pt")
         inputs = {key: value.to(self.device) for key, value in inputs.items()}
         with torch.no_grad():
             features = self._extract_features(self.model.get_text_features(**inputs))
-        self._text_features = torch.nn.functional.normalize(features, dim=-1)
+        features = torch.nn.functional.normalize(features, dim=-1)
+        self._source_features = features[0:1]
+        self._target_features = features[1:2]
 
-    def __call__(self, image: torch.Tensor) -> torch.Tensor:
-        if self._text_features is None:
-            raise RuntimeError("call prepare() before scoring")
+    def _image_features(self, image: torch.Tensor) -> torch.Tensor:
         image = image.clamp(0, 1)
         if image.shape[-2:] != (self.image_size, self.image_size):
-            image = torch.nn.functional.interpolate(image, size=(self.image_size, self.image_size), mode="bicubic", align_corners=False)
+            image = torch.nn.functional.interpolate(image, size=(self.image_size, self.image_size), mode="bicubic", align_corners=False, antialias=True)
         mean = torch.tensor(self.image_mean, device=image.device, dtype=image.dtype).view(1, 3, 1, 1)
         std = torch.tensor(self.image_std, device=image.device, dtype=image.dtype).view(1, 3, 1, 1)
         image = (image - mean) / std
         features = self._extract_features(self.model.get_image_features(pixel_values=image.to(dtype=self.dtype)))
-        features = torch.nn.functional.normalize(features, dim=-1)
-        text_features = self._text_features.to(device=features.device, dtype=features.dtype)
-        return (features * text_features).sum(dim=-1).mean()
+        return torch.nn.functional.normalize(features, dim=-1)
 
+    def score_pair(self, image: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        if self._target_features is None or self._source_features is None:
+            raise RuntimeError("call prepare() before scoring")
+        features = self._image_features(image)
+        target = (features * self._target_features.to(features)).sum(dim=-1).mean()
+        source = (features * self._source_features.to(features)).sum(dim=-1).mean()
+        return target, source
+
+
+def compute_siglip_reward_gradient(image: torch.Tensor, reward_model: TorchSigLIPReward, mode: str):
+    image_for_reward = image.detach().float().requires_grad_(True)
+    with torch.enable_grad():
+        target_score, source_score = reward_model.score_pair(image_for_reward)
+        reward = directional_reward(target_score, source_score) if mode == "directional" else target_score
+        if not reward.requires_grad:
+            raise RuntimeError("reward is not differentiable with respect to the image")
+        image_grad = torch.autograd.grad(reward, image_for_reward, retain_graph=False)[0]
+    return reward.detach(), target_score.detach(), source_score.detach(), image_grad.detach()
+
+
+def sampler_parity_check(pipe, image, prompt, height, width, seed, num_inference_steps, guidance_scale, max_sequence_length, max_area, manual_latents, device):
+    with torch.no_grad():
+        generator = torch.Generator(device=device).manual_seed(seed)
+        official = pipe(
+            image=image, prompt=prompt, height=height, width=width,
+            num_inference_steps=num_inference_steps, guidance_scale=guidance_scale,
+            generator=generator, output_type="latent",
+            max_sequence_length=max_sequence_length, max_area=max_area,
+        ).images
+    diff = (official.float() - manual_latents.float()).abs()
+    result = {
+        "max_abs": float(diff.max().item()),
+        "mean_abs": float(diff.mean().item()),
+        "allclose_atol_rtol_2e-2": bool(torch.allclose(official.float(), manual_latents.float(), atol=2e-2, rtol=2e-2)),
+    }
+    print(f"[parity] max_abs={result['max_abs']:.6g} mean_abs={result['mean_abs']:.6g} allclose={result['allclose_atol_rtol_2e-2']}", flush=True)
+    return result
 
 def run_experiment(args: argparse.Namespace) -> Path:
     from diffusers import FluxKontextPipeline
     from diffusers.pipelines.flux.pipeline_flux_kontext import calculate_shift, retrieve_timesteps
 
+    if args.num_inference_steps != 15:
+        raise ValueError("num_inference_steps is fixed at 15")
     device = torch.device(args.device)
     dtype = {"bfloat16": torch.bfloat16, "float16": torch.float16, "float32": torch.float32}[args.dtype]
     source = Image.open(args.input_image).convert("RGB")
@@ -223,7 +290,7 @@ def run_experiment(args: argparse.Namespace) -> Path:
 
     visual_steps = select_visualization_steps(args.num_inference_steps, args.visualization_steps)
     reward = TorchSigLIPReward(args.siglip_path, device, torch.float32)
-    reward.prepare(args.reward_text)
+    reward.prepare(args.source_reward_text, args.target_reward_text)
     records: dict[int, dict] = {}
     magnitudes: dict[int, np.ndarray] = {}
     for index, timestep in enumerate(timesteps):
@@ -243,20 +310,76 @@ def run_experiment(args: argparse.Namespace) -> Path:
             # Keep FLUX/VAE in its configured dtype, but use float32 for
             # SigLIP's image branch and input gradient to avoid bfloat16
             # quantization and patch-grid artifacts.
-            reward_value, image_grad = compute_image_gradient(clean_prediction.float(), reward)
+            reward_value, target_score, source_score, image_grad = compute_siglip_reward_gradient(clean_prediction.float(), reward, args.reward_mode)
             magnitude = rgb_gradient_magnitude(image_grad)[0].float().cpu().numpy()
             magnitudes[step_number] = magnitude
-            records[step_number] = {"z_t": z_t.cpu(), "v_t": v_t.cpu(), "sigma": sigma, "timestep": float(timestep.item()), "clean_prediction": clean_prediction.cpu(), "raw_gradient": image_grad[0].float().cpu().numpy(), "gradient_magnitude": magnitude, "reward": float(reward_value.item())}
+            grad_flat = image_grad[0].float()
+            records[step_number] = {
+                "z_t": z_t.cpu(), "v_t": v_t.cpu(), "sigma": sigma,
+                "timestep": float(timestep.item()), "clean_prediction": clean_prediction.cpu(),
+                "raw_gradient": image_grad[0].float().cpu().numpy(), "gradient_magnitude": magnitude,
+                "reward": float(reward_value.item()), "target_similarity": float(target_score.item()),
+                "source_similarity": float(source_score.item()), "grad_mean": float(grad_flat.abs().mean().item()),
+                "grad_max": float(grad_flat.abs().max().item()), "grad_l2": float(torch.linalg.vector_norm(grad_flat).item()),
+            }
+            print(f"step={step_number} sigma={sigma:.6f} target_similarity={records[step_number]['target_similarity']:.8f} source_similarity={records[step_number]['source_similarity']:.8f} directional_reward={records[step_number]['reward']:.8f} grad_mean={records[step_number]['grad_mean']:.6g} grad_max={records[step_number]['grad_max']:.6g} grad_l2={records[step_number]['grad_l2']:.6g}", flush=True)
         with torch.no_grad():
             latents = pipe.scheduler.step(velocity, timestep, latents, return_dict=False)[0]
     final_latents = latents.detach()
-    normalized, percentile_low, percentile_high = global_percentile_normalize(magnitudes, args.low_percentile, args.high_percentile)
+    parity = sampler_parity_check(
+        pipe, resized_source, args.edit_instruction, height, width, args.seed,
+        args.num_inference_steps, args.guidance_scale, args.max_sequence_length,
+        args.max_area, final_latents, device,
+    )
+    per_step, per_step_bounds = per_step_percentile_normalize(
+        magnitudes, args.low_percentile, args.high_percentile
+    )
+    shared, shared_low, shared_high = global_percentile_normalize(
+        magnitudes, args.low_percentile, args.high_percentile
+    )
     source_array = np.asarray(resized_source, dtype=np.float32) / 255.0
     _save_rgb(output_dir / "source.png", source_array, args.dpi)
     with torch.no_grad():
         edited_array = _to_display_array(_decode_packed_latents(pipe, final_latents, height, width)[0])
     _save_rgb(output_dir / "edited.png", edited_array, args.dpi)
-    metadata = {"input_image": os.path.abspath(args.input_image), "model_path": os.path.abspath(args.model_path), "siglip_path": os.path.abspath(args.siglip_path), "edit_instruction": args.edit_instruction, "reward_text": args.reward_text, "seed": args.seed, "num_inference_steps": args.num_inference_steps, "guidance_scale": args.guidance_scale, "visualization_steps": visual_steps, "height": height, "width": width, "percentile_low": args.low_percentile, "percentile_high": args.high_percentile, "global_clip_low": percentile_low, "global_clip_high": percentile_high, "gaussian_sigma": args.gaussian_sigma, "overlay_alpha": args.overlay_alpha, "colormap": "turbo", "dtype": args.dtype, "steps": {str(step): {"timestep": records[step]["timestep"], "sigma": records[step]["sigma"], "reward": records[step]["reward"]} for step in visual_steps}}
+
+    metadata = {
+        "input_image": os.path.abspath(args.input_image),
+        "model_path": os.path.abspath(args.model_path),
+        "siglip_path": os.path.abspath(args.siglip_path),
+        "edit_instruction": args.edit_instruction,
+        "source_reward_text": args.source_reward_text,
+        "target_reward_text": args.target_reward_text,
+        "reward_mode": args.reward_mode,
+        "seed": args.seed,
+        "num_inference_steps": args.num_inference_steps,
+        "guidance_scale": args.guidance_scale,
+        "visualization_steps": visual_steps,
+        "height": height,
+        "width": width,
+        "percentile_low": args.low_percentile,
+        "percentile_high": args.high_percentile,
+        "per_step_clip_bounds": {str(k): list(v) for k, v in per_step_bounds.items()},
+        "shared_clip_low": shared_low,
+        "shared_clip_high": shared_high,
+        "gaussian_sigma": args.gaussian_sigma,
+        "overlay_alpha": args.overlay_alpha,
+        "colormap": "turbo",
+        "dtype": args.dtype,
+        "reward_dtype": "float32",
+        "sampler_parity": parity,
+        "steps": {
+            str(step): {
+                key: records[step][key]
+                for key in (
+                    "timestep", "sigma", "reward", "target_similarity",
+                    "source_similarity", "grad_mean", "grad_max", "grad_l2",
+                )
+            }
+            for step in visual_steps
+        },
+    }
+
     for step_number in visual_steps:
         record = records[step_number]
         step_dir = output_dir / "steps" / f"step_{step_number:02d}"
@@ -266,32 +389,71 @@ def run_experiment(args: argparse.Namespace) -> Path:
         torch.save(record["clean_prediction"], step_dir / "clean_prediction.pt")
         np.save(step_dir / "raw_gradient.npy", record["raw_gradient"].astype(np.float32))
         np.save(step_dir / "gradient_magnitude.npy", record["gradient_magnitude"].astype(np.float32))
-        np.save(step_dir / "heatmap.npy", normalized[step_number].astype(np.float32))
+        np.save(step_dir / "heatmap.npy", per_step[step_number].astype(np.float32))
+        np.save(step_dir / "heatmap_shared.npy", shared[step_number].astype(np.float32))
         _save_rgb(step_dir / "clean_prediction.png", _to_display_array(record["clean_prediction"]), args.dpi)
-        overlay = make_overlay(_to_display_array(record["clean_prediction"]), normalized[step_number], args.overlay_alpha, args.gaussian_sigma)
-        _save_rgb(step_dir / "overlay.png", overlay, args.dpi)
-        (step_dir / "sigma.json").write_text(json.dumps({"step": step_number, "timestep": records[step_number]["timestep"], "sigma": records[step_number]["sigma"], "reward": records[step_number]["reward"]}, indent=2), encoding="utf-8")
-    (output_dir / "trajectory_metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+        _save_rgb(step_dir / "heatmap_raw_or_normalized.png", heatmap_rgb(per_step[step_number], args.gaussian_sigma), args.dpi)
+        _save_rgb(step_dir / "heatmap_shared.png", heatmap_rgb(shared[step_number], args.gaussian_sigma), args.dpi)
+        _save_rgb(
+            step_dir / "overlay.png",
+            make_overlay(_to_display_array(record["clean_prediction"]), per_step[step_number], args.overlay_alpha, args.gaussian_sigma),
+            args.dpi,
+        )
+        _save_rgb(
+            step_dir / "overlay_shared.png",
+            make_overlay(_to_display_array(record["clean_prediction"]), shared[step_number], args.overlay_alpha, args.gaussian_sigma),
+            args.dpi,
+        )
+        (step_dir / "sigma.json").write_text(
+            json.dumps({
+                "step": step_number,
+                "timestep": record["timestep"],
+                "sigma": record["sigma"],
+                "target_similarity": record["target_similarity"],
+                "source_similarity": record["source_similarity"],
+                "directional_reward": record["reward"],
+                "grad_mean": record["grad_mean"],
+                "grad_max": record["grad_max"],
+                "grad_l2": record["grad_l2"],
+            }, indent=2),
+            encoding="utf-8",
+        )
+
     labels = ["Source", *[f"Step {step}" for step in visual_steps], "Edited"]
-    arrays = [source_array] + [make_overlay(_to_display_array(records[step]["clean_prediction"]), normalized[step], args.overlay_alpha, args.gaussian_sigma) for step in visual_steps] + [edited_array]
-    fig, axes = plt.subplots(1, len(arrays), figsize=(2.6 * len(arrays), 4.4), squeeze=False)
-    for axis, label, array in zip(axes[0], labels, arrays):
-        axis.imshow(array)
-        axis.set_title(label, fontsize=10)
-        axis.axis("off")
-    fig.tight_layout(pad=0.6)
-    fig.savefig(output_dir / "reward_gradient_evolution.png", dpi=args.dpi, bbox_inches="tight")
-    fig.savefig(output_dir / "reward_gradient_evolution.pdf", dpi=args.dpi, bbox_inches="tight")
-    plt.close(fig)
+    per_arrays = [source_array] + [
+        make_overlay(_to_display_array(records[step]["clean_prediction"]), per_step[step], args.overlay_alpha, args.gaussian_sigma)
+        for step in visual_steps
+    ] + [edited_array]
+    shared_arrays = [source_array] + [
+        make_overlay(_to_display_array(records[step]["clean_prediction"]), shared[step], args.overlay_alpha, args.gaussian_sigma)
+        for step in visual_steps
+    ] + [edited_array]
+
+    def save_evolution(arrays: list[np.ndarray], stem: str) -> None:
+        fig, axes = plt.subplots(1, len(arrays), figsize=(2.6 * len(arrays), 4.4), squeeze=False)
+        for axis, label, array in zip(axes[0], labels, arrays):
+            axis.imshow(array)
+            axis.set_title(label, fontsize=10)
+            axis.axis("off")
+        fig.tight_layout(pad=0.6)
+        fig.savefig(output_dir / f"{stem}.png", dpi=args.dpi, bbox_inches="tight")
+        fig.savefig(output_dir / f"{stem}.pdf", dpi=args.dpi, bbox_inches="tight")
+        plt.close(fig)
+
+    save_evolution(per_arrays, "reward_gradient_evolution_per_step")
+    save_evolution(shared_arrays, "reward_gradient_evolution_shared")
+    save_evolution(per_arrays, "reward_gradient_evolution")
+    (output_dir / "trajectory_metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
     print(output_dir)
     return output_dir
-
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input-image", required=True)
     parser.add_argument("--edit-instruction", default=DEFAULT_EDIT_INSTRUCTION)
-    parser.add_argument("--reward-text", default=DEFAULT_REWARD_TEXT)
+    parser.add_argument("--source-reward-text", default=DEFAULT_SOURCE_REWARD_TEXT)
+    parser.add_argument("--target-reward-text", default=DEFAULT_TARGET_REWARD_TEXT)
+    parser.add_argument("--reward-mode", choices=("target", "directional"), default="directional")
     parser.add_argument("--model-path", default=DEFAULT_MODEL_PATH)
     parser.add_argument("--siglip-path", default=DEFAULT_SIGLIP_PATH)
     parser.add_argument("--output-dir", default=DEFAULT_OUTPUT_DIR)
@@ -305,7 +467,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--visualization-steps", type=int, nargs="+", default=list(DEFAULT_STEPS))
     parser.add_argument("--low-percentile", type=float, default=1.0)
     parser.add_argument("--high-percentile", type=float, default=99.0)
-    parser.add_argument("--gaussian-sigma", type=float, default=0.0)
+    parser.add_argument("--gaussian-sigma", type=float, default=2.0)
     parser.add_argument("--overlay-alpha", type=float, default=0.45)
     parser.add_argument("--dpi", type=int, default=300)
     return parser
