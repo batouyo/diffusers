@@ -1,0 +1,34 @@
+{
+  "image": "assets/dog_flowers_source.jpg",
+  "prompt": "Add flowers to the dog's mouth",
+  "model_path": "/data15/hyp/weight/FLUX.1-Kontext-dev",
+  "steps": 15,
+  "seed": 42,
+  "guidance_scale": 2.5,
+  "strengths": [
+    0.0,
+    0.25,
+    0.5,
+    0.75,
+    1.0
+  ],
+  "blend_weight_mapping": "blend_weight=1-strength",
+  "preserve_steps": 4,
+  "edit_steps": 4,
+  "similarity_threshold": 0.8,
+  "similarity_mode": "elementwise",
+  "wavelet": "db4",
+  "levels": 2,
+  "working_resolution": [
+    1232,
+    848
+  ],
+  "runs": [
+    "native",
+    "strength_0.00",
+    "strength_0.25",
+    "strength_0.50",
+    "strength_0.75",
+    "strength_1.00"
+  ]
+}

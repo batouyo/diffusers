@@ -1,0 +1,9 @@
+{
+  "strength": 0.5,
+  "blend_weight": 0.5,
+  "enable_interv": true,
+  "steps": 15,
+  "seed": 42,
+  "prompt": "Add flowers to the dog's mouth",
+  "model_path": "/data15/hyp/weight/FLUX.1-Kontext-dev"
+}
